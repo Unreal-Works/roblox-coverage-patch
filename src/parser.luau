@@ -282,6 +282,9 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
     local branchInstrumentedLines = {}
     local branchAdded = 0
     
+    -- Track which lines are inside if/elseif conditions (between if/elseif keyword and then keyword)
+    local linesInCondition = {}
+    
     -- First pass: detect and instrument functions
     for idx, token in ipairs(tokens) do
         if token.kind == "keyword" and token.value == "function" then
@@ -336,7 +339,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
         end
     end
     
-    -- Second pass: detect if/elseif/else branches
+    -- Second pass: detect if/elseif/else branches and mark condition lines
     local i = 1
     while i <= #tokens do
         local token = tokens[i]
@@ -358,6 +361,13 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
             end
             
             if thenIdx then
+                -- Mark all lines between 'if' and 'then' as being in a condition
+                local ifLine = token.line
+                local thenLine = tokens[thenIdx].line
+                for lineNum = ifLine, thenLine do
+                    linesInCondition[lineNum] = true
+                end
+                
                 -- First branch starts after 'then'
                 local firstBranchLine = nil
                 if thenIdx + 1 <= #tokens then
@@ -397,6 +407,14 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                                     break
                                 end
                             end
+                            
+                            -- Mark all lines between 'elseif' and 'then' as being in a condition
+                            local elseifLine = t.line
+                            local elseifThenLine = elseifThenIdx and tokens[elseifThenIdx].line or t.line
+                            for lineNum = elseifLine, elseifThenLine do
+                                linesInCondition[lineNum] = true
+                            end
+                            
                             if elseifThenIdx and elseifThenIdx + 1 <= #tokens then
                                 local elseifBranchLine = tokens[elseifThenIdx + 1].line
                                 table.insert(branchLines, {line = elseifBranchLine, pathIndex = #branchLocations})
@@ -461,7 +479,8 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
         end
         
         -- Add statement instrumentation if needed
-        if parser.shouldInstrument(token) and trimmed ~= "" then
+        -- Skip instrumentation for lines that are part of a condition (between if/elseif and then)
+        if parser.shouldInstrument(token) and trimmed ~= "" and not linesInCondition[lineNo] then
             local id = coverage.nextId
             coverage.nextId += 1
             coverage.map[id] = { file = filePath, line = lineNo }

@@ -120,14 +120,14 @@ function parser.tryScanLong(src: string, i: number)
 
     local closing = "]" .. string.rep("=", equalsCount) .. "]"
     local startContent = i + 2 + equalsCount
-    local closePos = string.find(src, closing, startContent, true)
-    if not closePos then
+    local closeStart, closeEnd = string.find(src, closing, startContent, true)
+    if not closeStart then
         return #src + 1, 0
     end
 
-    local content = string.sub(src, startContent, closePos - 1)
+    local content = string.sub(src, startContent, closeStart - 1)
     local newlines = parser.countNewlines(content)
-    return closePos + #closing, newlines
+    return closeEnd + 1, newlines
 end
 
 function parser.tokenize(src: string): {Token}

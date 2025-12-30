@@ -7,7 +7,8 @@
     "types": "src/index.d.ts",
     "scripts": {
         "build:demo": "npx rojo build demo.project.json -o demo/place.rbxl",
-        "demo": "npm run build:demo --silent && node demo/runTest.cjs"
+        "demo": "npm run build:demo --silent && node demo/runTest.cjs",
+        "test": "npx lune run test/test.luau"
     },
     "publishConfig": {
         "access": "public"
@@ -22,6 +23,7 @@
         "@rbxts/types": "^1.0.813",
         "dotenv": "^17.2.3",
         "istanbul-reports": "^3.2.0",
+        "rbx-lune": "^1.0.0",
         "rbxluau": "^1.7.0",
         "roblox-ts": "^3.0.0",
         "rojo": "^1.0.3-rojo7.6.1",

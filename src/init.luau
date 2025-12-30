@@ -163,4 +163,39 @@ function covpatch.istanbul()
 	return report
 end
 
+-- Revert all instrumented modules back to their original state
+function covpatch.cleanup()
+	local coverage = parser.ensureCoverage()
+	
+	for _, moduleInfo in ipairs(coverage.originals) do
+		if moduleInfo.wasReplaced then
+			-- Module was replaced with a patched version
+			-- Destroy the patched module and restore the original name
+			if moduleInfo.patchedModule then
+				pcall(function()
+					moduleInfo.patchedModule:Destroy()
+				end)
+			end
+			
+			if moduleInfo.module then
+				pcall(function()
+					-- Restore original name (remove __cov_orig suffix)
+					local originalName = string.gsub(moduleInfo.module.Name, "__cov_orig$", "")
+					moduleInfo.module.Name = originalName
+				end)
+			end
+		else
+			-- Module's Source was modified directly, restore it
+			if moduleInfo.module and moduleInfo.originalSource then
+				pcall(function()
+					moduleInfo.module.Source = moduleInfo.originalSource
+				end)
+			end
+		end
+	end
+	
+	-- Clear the originals tracking
+	coverage.originals = {}
+end
+
 return covpatch

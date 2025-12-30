@@ -510,11 +510,15 @@ function parser.ensureCoverage()
             nextFnId = 1,
             b = {},
             branchMap = {},
-            nextBranchId = 1
+            nextBranchId = 1,
+            originals = {}
         }
         _G.__COVERAGE__ = coverage
     else
         -- Initialize missing fields
+        if not coverage.originals then
+            coverage.originals = {}
+        end
         if not coverage.nextId then
             local maxId = 0
             for id in pairs(coverage.map) do
@@ -593,6 +597,14 @@ function parser.instrumentModule(module: ModuleScript, root: Instance, coverage)
         return
     end
 
+    -- Save original state before instrumenting
+    local moduleInfo = {
+        module = module,
+        originalSource = source,
+        wasReplaced = false,
+        patchedModule = nil
+    }
+
     local setOk = pcall(function()
         module.Source = instrumented
     end)
@@ -606,7 +618,13 @@ function parser.instrumentModule(module: ModuleScript, root: Instance, coverage)
         patched.Name = originalName
         patched.Source = instrumented
         patched.Parent = parent
+        
+        moduleInfo.wasReplaced = true
+        moduleInfo.patchedModule = patched
     end
+    
+    -- Track this module for cleanup
+    table.insert(coverage.originals, moduleInfo)
 end
 
 return parser

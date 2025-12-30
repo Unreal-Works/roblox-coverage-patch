@@ -1,0 +1,26 @@
+{
+    "name": "demo",
+    "tree": {
+        "$className": "DataModel",
+
+        "ReplicatedStorage": {
+            "covpatch": {
+                "$path": "src"
+            },
+            "src": {
+                "$path": "demo/src"
+            }
+        },
+
+        "Workspace": {
+            "$properties": {
+                "FilteringEnabled": true
+            }
+        },
+        "SoundService": {
+            "$properties": {
+                "RespectFilteringEnabled": true
+            }
+        }
+    }
+}

@@ -145,6 +145,7 @@ function covpatch.istanbul()
 				report[file].branchMap[tostring(branchId)] = {
 					type = branchData.type,
 					line = branchData.line,
+					loc = locations[1],  -- lcov expects a loc instead of locations
 					locations = locations
 				}
 				

@@ -6,6 +6,44 @@ export type Token = {
     line: number,
 }
 
+-- Extract function name from tokens following 'function' keyword
+function parser.extractFunctionName(tokens: {Token}, startIndex: number): string
+    local i = startIndex
+    if i > #tokens then
+        return "<anonymous>"
+    end
+    
+    local nameParts = {}
+    local token = tokens[i]
+    
+    -- Handle: function name(...) or function obj.name(...) or function obj:name(...)
+    if token.kind == "identifier" then
+        table.insert(nameParts, token.value)
+        i += 1
+        
+        -- Check for . or : for method/nested names
+        while i <= #tokens do
+            local sep = tokens[i]
+            if sep.kind == "symbol" and (sep.value == "." or sep.value == ":") then
+                table.insert(nameParts, sep.value)
+                i += 1
+                if i <= #tokens and tokens[i].kind == "identifier" then
+                    table.insert(nameParts, tokens[i].value)
+                    i += 1
+                else
+                    break
+                end
+            else
+                break
+            end
+        end
+        
+        return table.concat(nameParts, "")
+    end
+    
+    return "<anonymous>"
+end
+
 local KEYWORDS = {
     ["and"] = true,
     ["break"] = true,
@@ -225,21 +263,219 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
     local firstTokens = parser.firstTokenPerLine(tokens)
     local lines = parser.splitLines(source)
     local instrumented = {}
-    local added = 0
+    local stmtAdded = 0
+    local fnAdded = 0
+    
+    -- Build token index lookup
+    local tokensByLine = {}
+    for idx, token in ipairs(tokens) do
+        if not tokensByLine[token.line] then
+            tokensByLine[token.line] = {}
+        end
+        table.insert(tokensByLine[token.line], {index = idx, token = token})
+    end
 
+    -- Track which lines have function instrumentation
+    local functionInstrumentedLines = {}
+    
+    -- Track which lines have branch instrumentation
+    local branchInstrumentedLines = {}
+    local branchAdded = 0
+    
+    -- First pass: detect and instrument functions
+    for idx, token in ipairs(tokens) do
+        if token.kind == "keyword" and token.value == "function" then
+            -- Extract function name
+            local funcName = parser.extractFunctionName(tokens, idx + 1)
+            
+            -- Find the line after the function declaration (after opening paren or first line of body)
+            -- We need to find the line right after 'function name(params)' which would be the first body line
+            local bodyLineNo = nil
+            local parenDepth = 0
+            local foundParen = false
+            
+            for i = idx + 1, #tokens do
+                local t = tokens[i]
+                if t.kind == "symbol" and t.value == "(" then
+                    foundParen = true
+                    parenDepth += 1
+                elseif t.kind == "symbol" and t.value == ")" then
+                    parenDepth -= 1
+                    if parenDepth == 0 and foundParen then
+                        -- Found end of parameter list, next line is body start
+                        -- Look for the next token that's on a different line
+                        if i + 1 <= #tokens then
+                            local nextToken = tokens[i + 1]
+                            -- If next token is on same line, we need to inject on that line
+                            -- Otherwise inject on the next line
+                            bodyLineNo = nextToken.line
+                            break
+                        end
+                    end
+                end
+            end
+            
+            -- If we couldn't find params, just use next line after function keyword
+            if not bodyLineNo then
+                bodyLineNo = token.line + 1
+            end
+            
+            -- Register function
+            local fnId = coverage.nextFnId
+            coverage.nextFnId += 1
+            coverage.fnMap[fnId] = {
+                name = funcName,
+                line = token.line,                file = filePath,                loc = { start = { line = token.line, column = 0 }, ["end"] = { line = token.line, column = 0 } }
+            }
+            
+            -- Mark this line for function instrumentation
+            if not functionInstrumentedLines[bodyLineNo] then
+                functionInstrumentedLines[bodyLineNo] = {}
+            end
+            table.insert(functionInstrumentedLines[bodyLineNo], fnId)
+        end
+    end
+    
+    -- Second pass: detect if/elseif/else branches
+    local i = 1
+    while i <= #tokens do
+        local token = tokens[i]
+        if token.kind == "keyword" and token.value == "if" then
+            -- Found an if statement, track all branches
+            local branchId = coverage.nextBranchId
+            coverage.nextBranchId += 1
+            
+            local branchLocations = {}
+            local branchLines = {}
+            
+            -- Find the 'then' for the if branch
+            local thenIdx = nil
+            for j = i + 1, #tokens do
+                if tokens[j].kind == "keyword" and tokens[j].value == "then" then
+                    thenIdx = j
+                    break
+                end
+            end
+            
+            if thenIdx then
+                -- First branch starts after 'then'
+                local firstBranchLine = nil
+                if thenIdx + 1 <= #tokens then
+                    firstBranchLine = tokens[thenIdx + 1].line
+                end
+                
+                if firstBranchLine then
+                    table.insert(branchLines, {line = firstBranchLine, pathIndex = 0})
+                    table.insert(branchLocations, {start = {line = firstBranchLine, column = 0}, ["end"] = {line = firstBranchLine, column = 0}})
+                end
+                
+                -- Look for elseif/else/end to find other branches
+                local depth = 1
+                local j = thenIdx + 1
+                local foundElse = false
+                
+                while j <= #tokens and depth > 0 do
+                    local t = tokens[j]
+                    if t.kind == "keyword" then
+                        if t.value == "if" then
+                            depth += 1
+                        elseif t.value == "end" then
+                            depth -= 1
+                            if depth == 0 then
+                                -- Reached the end of this if statement
+                                -- If we never found an else, add implicit else branch
+                                if not foundElse then
+                                    table.insert(branchLocations, {start = {line = t.line, column = 0}, ["end"] = {line = t.line, column = 0}})
+                                end
+                            end
+                        elseif depth == 1 and t.value == "elseif" then
+                            -- Find the 'then' after elseif
+                            local elseifThenIdx = nil
+                            for k = j + 1, #tokens do
+                                if tokens[k].kind == "keyword" and tokens[k].value == "then" then
+                                    elseifThenIdx = k
+                                    break
+                                end
+                            end
+                            if elseifThenIdx and elseifThenIdx + 1 <= #tokens then
+                                local elseifBranchLine = tokens[elseifThenIdx + 1].line
+                                table.insert(branchLines, {line = elseifBranchLine, pathIndex = #branchLocations})
+                                table.insert(branchLocations, {start = {line = elseifBranchLine, column = 0}, ["end"] = {line = elseifBranchLine, column = 0}})
+                            end
+                        elseif depth == 1 and t.value == "else" then
+                            foundElse = true
+                            -- Else branch starts on next line
+                            if j + 1 <= #tokens then
+                                local elseBranchLine = tokens[j + 1].line
+                                table.insert(branchLines, {line = elseBranchLine, pathIndex = #branchLocations})
+                                table.insert(branchLocations, {start = {line = elseBranchLine, column = 0}, ["end"] = {line = elseBranchLine, column = 0}})
+                            end
+                        end
+                    end
+                    j += 1
+                end
+                
+                -- Register branch if we found at least 2 paths
+                if #branchLocations >= 2 then
+                    coverage.branchMap[branchId] = {
+                        type = "if",
+                        line = token.line,
+                        file = filePath,
+                        locations = branchLocations
+                    }
+                    
+                    -- Mark lines for branch instrumentation
+                    for _, branchInfo in ipairs(branchLines) do
+                        if not branchInstrumentedLines[branchInfo.line] then
+                            branchInstrumentedLines[branchInfo.line] = {}
+                        end
+                        table.insert(branchInstrumentedLines[branchInfo.line], {branchId = branchId, pathIndex = branchInfo.pathIndex})
+                    end
+                end
+            end
+        end
+        i += 1
+    end
+
+    -- Third pass: generate instrumented source
     for lineNo, text in ipairs(lines) do
         local token = firstTokens[lineNo]
-        if parser.shouldInstrument(token) then
-            local trimmed = string.match(text, "^%s*(.-)$") or ""
+        local indent = string.match(text, "^(%s*)") or ""
+        local trimmed = string.match(text, "^%s*(.-)$") or ""
+        local modifications = {}
+        
+        -- Add branch instrumentation if needed
+        if branchInstrumentedLines[lineNo] then
+            for _, branchInfo in ipairs(branchInstrumentedLines[lineNo]) do
+                table.insert(modifications, "_G.__covbranch(" .. tostring(branchInfo.branchId) .. ", " .. tostring(branchInfo.pathIndex) .. ");")
+                branchAdded += 1
+            end
+        end
+        
+        -- Add function instrumentation if needed
+        if functionInstrumentedLines[lineNo] then
+            for _, fnId in ipairs(functionInstrumentedLines[lineNo]) do
+                table.insert(modifications, "_G.__covfn(" .. tostring(fnId) .. ");")
+                fnAdded += 1
+            end
+        end
+        
+        -- Add statement instrumentation if needed
+        if parser.shouldInstrument(token) and trimmed ~= "" then
+            local id = coverage.nextId
+            coverage.nextId += 1
+            coverage.map[id] = { file = filePath, line = lineNo }
+            table.insert(modifications, "_G.__covhit(" .. tostring(id) .. ");")
+            stmtAdded += 1
+        end
+        
+        -- Combine modifications with original line
+        if #modifications > 0 then
+            local prefix = indent .. table.concat(modifications, " ")
             if trimmed ~= "" then
-                local indent = string.match(text, "^(%s*)") or ""
-                local id = coverage.nextId
-                coverage.nextId += 1
-                coverage.map[id] = { file = filePath, line = lineNo }
-                instrumented[#instrumented + 1] = indent .. "_G.__covhit(" .. tostring(id) .. "); " .. trimmed
-                added += 1
+                instrumented[#instrumented + 1] = prefix .. " " .. trimmed
             else
-                instrumented[#instrumented + 1] = text
+                instrumented[#instrumented + 1] = prefix
             end
         else
             instrumented[#instrumented + 1] = text
@@ -247,7 +483,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
     end
 
     local result = table.concat(instrumented, "\n")
-    return result, added
+    return result, stmtAdded + fnAdded + branchAdded
 end
 
 -- Compute module path relative to a stopAt ancestor
@@ -265,21 +501,78 @@ end
 function parser.ensureCoverage()
     local coverage = _G.__COVERAGE__
     if not coverage then
-        coverage = { hits = {}, map = {}, nextId = 1 }
+        coverage = { 
+            hits = {}, 
+            map = {}, 
+            nextId = 1,
+            f = {},
+            fnMap = {},
+            nextFnId = 1,
+            b = {},
+            branchMap = {},
+            nextBranchId = 1
+        }
         _G.__COVERAGE__ = coverage
-    elseif not coverage.nextId then
-        local maxId = 0
-        for id in pairs(coverage.map) do
-            if id > maxId then
-                maxId = id
+    else
+        -- Initialize missing fields
+        if not coverage.nextId then
+            local maxId = 0
+            for id in pairs(coverage.map) do
+                if id > maxId then
+                    maxId = id
+                end
             end
+            coverage.nextId = maxId + 1
         end
-        coverage.nextId = maxId + 1
+        if not coverage.f then
+            coverage.f = {}
+        end
+        if not coverage.fnMap then
+            coverage.fnMap = {}
+        end
+        if not coverage.nextFnId then
+            local maxFnId = 0
+            for id in pairs(coverage.fnMap) do
+                if id > maxFnId then
+                    maxFnId = id
+                end
+            end
+            coverage.nextFnId = maxFnId + 1
+        end
+        if not coverage.b then
+            coverage.b = {}
+        end
+        if not coverage.branchMap then
+            coverage.branchMap = {}
+        end
+        if not coverage.nextBranchId then
+            local maxBranchId = 0
+            for id in pairs(coverage.branchMap) do
+                if id > maxBranchId then
+                    maxBranchId = id
+                end
+            end
+            coverage.nextBranchId = maxBranchId + 1
+        end
     end
 
     function _G.__covhit(id: number)
         local hits = coverage.hits
         hits[id] = (hits[id] or 0) + 1
+    end
+    
+    function _G.__covfn(fnId: number)
+        local f = coverage.f
+        f[fnId] = (f[fnId] or 0) + 1
+    end
+    
+    function _G.__covbranch(branchId: number, pathIndex: number)
+        local b = coverage.b
+        if not b[branchId] then
+            b[branchId] = {}
+        end
+        local path = b[branchId]
+        path[pathIndex] = (path[pathIndex] or 0) + 1
     end
 
     return coverage

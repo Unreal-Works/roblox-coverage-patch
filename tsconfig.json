@@ -21,12 +21,9 @@
             "node_modules/@rbxts-js"
         ],
         // configurable
-        "rootDirs": [
-            "demo",
-            "src"
-        ],
+        "rootDir": "src",
         "outDir": "out",
-        "baseUrl": "demo",
+        "baseUrl": "src",
         "incremental": true,
         "tsBuildInfoFile": "out/tsconfig.tsbuildinfo"
     },

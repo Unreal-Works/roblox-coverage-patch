@@ -1,5 +1,9 @@
 {
+    "name": "@rbxts/coverage-patch",
+    "version": "0.0.0",
+    "description": "Coverage instrumentation for Roblox Luau",
     "type": "module",
+    "main": "src/init.luau",
     "scripts": {
         "build:demo": "npx rojo build demo.project.json -o demo/place.rbxl",
         "demo": "npm run build:demo --silent && node demo/runTest.cjs"
@@ -21,5 +25,8 @@
         "@rbxts/services": "^1.5.5",
         "istanbul-lib-coverage": "^3.2.2",
         "istanbul-lib-report": "^3.0.1"
-    }
+    },
+    "files": [
+        "src/**/*"
+    ]
 }

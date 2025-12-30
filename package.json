@@ -2,7 +2,7 @@
     "type": "module",
     "scripts": {
         "build:demo": "npx rojo build demo.project.json -o demo/place.rbxl",
-        "test": "npm run build:demo --silent && npx rbxluau --place demo/place.rbxl --script demo/test.luau"
+        "demo": "npm run build:demo --silent && npx rbxluau --place demo/place.rbxl --script demo/test.luau"
     },
     "license": "MIT",
     "devDependencies": {

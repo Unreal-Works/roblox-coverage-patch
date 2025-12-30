@@ -1,14 +1,14 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local covpatch = require(ReplicatedStorage.covpatch)
+
+covpatch.instrument()
+
 local src = ReplicatedStorage:WaitForChild("src")
 local MathUtils = require(src.MathUtils)
 local GameObject = require(src.GameObject)
 local Utils = require(src.Utils)
 local DataStructures = require(src.DataStructures)
 local Advanced = require(src.Advanced)
-
-local covpatch = require(ReplicatedStorage.covpatch)
-
-covpatch.run()
 
 -- Test MathUtils
 print("Testing MathUtils:")
@@ -114,4 +114,5 @@ print("Reduced sum:", sum)
 local success, value = Advanced.safeCall(function() return "safe" end)
 print("Safe call success:", success, "value:", value)
 
-return covpatch.finalize()
+print("__COVPATCH__")
+return covpatch.istanbul()

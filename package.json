@@ -2,13 +2,14 @@
     "type": "module",
     "scripts": {
         "build:demo": "npx rojo build demo.project.json -o demo/place.rbxl",
-        "demo": "npm run build:demo --silent && npx rbxluau --place demo/place.rbxl --script demo/test.luau"
+        "demo": "npm run build:demo --silent && node demo/runTest.cjs"
     },
     "license": "MIT",
     "devDependencies": {
         "@rbxts/compiler-types": "^3.0.0-types.0",
         "@rbxts/types": "^1.0.813",
         "dotenv": "^17.2.3",
+        "istanbul-reports": "^3.2.0",
         "rbxluau": "^1.7.0",
         "roblox-ts": "^3.0.0",
         "rojo": "^1.0.3-rojo7.6.1",
@@ -17,6 +18,8 @@
     "dependencies": {
         "@rbxts/jest": "^3.13.3-alpha.2",
         "@rbxts/jest-globals": "^3.13.3-alpha.2",
-        "@rbxts/services": "^1.5.5"
+        "@rbxts/services": "^1.5.5",
+        "istanbul-lib-coverage": "^3.2.2",
+        "istanbul-lib-report": "^3.0.1"
     }
 }

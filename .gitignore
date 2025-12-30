@@ -3,4 +3,6 @@
 /*.rbxl.lock
 sourcemap.json
 place.rbxl
+demo/coverage
 **/*.env
+*.log

@@ -610,6 +610,8 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                                     j += 1
                                 elseif rt.kind == "identifier" then
                                     j += 1
+                                elseif rt.kind == "keyword" and (rt.value == "nil" or rt.value == "true" or rt.value == "false") then
+                                    j += 1
                                 else
                                     -- Stop skipping type if we're not in parens or angle brackets
                                     if returnParenDepth == 0 and returnAngleDepth == 0 then

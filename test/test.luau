@@ -947,8 +947,19 @@ end]])
     expect(added).toBe(7)
 end)
 
-
-
+addTest("regression: instrumentSource circus.combined.dispatch", function()
+    local coverage = parser.ensureCoverage()
+    local source = [[local function getTestDuration(test: Circus_TestEntry): number | nil
+	local startedAt = test.startedAt
+	return if typeof(startedAt) == "number" then DateTime.now().UnixTimestampMillis - startedAt else nil
+end]]
+    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+    expect(instrumented).toBe([[local function getTestDuration(test: Circus_TestEntry): number | nil _G.__covfn(1);
+	_G.__covhit(1); local startedAt = test.startedAt
+	_G.__covhit(2); return if typeof(startedAt) == "number" then _G.__covbranch(1, 0)(DateTime.now().UnixTimestampMillis - startedAt) else _G.__covbranch(1, 1)(nil)
+end]])
+    expect(added).toBe(5)
+end)
 
 -- Run the tests
 runTests()

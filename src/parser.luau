@@ -365,97 +365,99 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
             -- Extract function name
             local funcName = parser.extractFunctionName(tokens, idx + 1)
             
-            -- Only instrument named functions, not anonymous function literals
-            -- Anonymous functions have the name "<anonymous>"
-            if funcName ~= "<anonymous>" then
-                -- Find the line after the function declaration (after opening paren or first line of body)
-                -- We need to find the line right after 'function name(params)' which would be the first body line
-                local bodyLineNo = nil
-                local parenDepth = 0
-                local foundParen = false
-                
-                for i = idx + 1, #tokens do
-                    local t = tokens[i]
-                    if t.kind == "symbol" and t.value == "(" then
-                        foundParen = true
-                        parenDepth += 1
-                    elseif t.kind == "symbol" and t.value == ")" then
-                        parenDepth -= 1
-                        if parenDepth == 0 and foundParen then
-                            -- Found end of parameter list, now skip past return type annotation if present
-                            local j = i + 1
-                            
-                            -- Skip past return type annotation (: returnType)
-                            if j <= #tokens and tokens[j].kind == "symbol" and tokens[j].value == ":" then
-                                j += 1
-                                -- Skip the return type tokens until we find something that's not part of the type
-                                local returnParenDepth = 0
-                                while j <= #tokens do
-                                    local rt = tokens[j]
-                                    if rt.kind == "symbol" and rt.value == "(" then
-                                        returnParenDepth += 1
+            -- Find the line after the function declaration (after opening paren or first line of body)
+            -- We need to find the line right after 'function name(params)' which would be the first body line
+            local bodyLineNo = nil
+            local parenDepth = 0
+            local foundParen = false
+            
+            for i = idx + 1, #tokens do
+                local t = tokens[i]
+                if t.kind == "symbol" and t.value == "(" then
+                    foundParen = true
+                    parenDepth += 1
+                elseif t.kind == "symbol" and t.value == ")" then
+                    parenDepth -= 1
+                    if parenDepth == 0 and foundParen then
+                        -- Found end of parameter list, now skip past return type annotation if present
+                        local j = i + 1
+                        
+                        -- Skip past return type annotation (: returnType)
+                        if j <= #tokens and tokens[j].kind == "symbol" and tokens[j].value == ":" then
+                            j += 1
+                            -- Skip the return type tokens until we find something that's not part of the type
+                            local returnParenDepth = 0
+                            while j <= #tokens do
+                                local rt = tokens[j]
+                                if rt.kind == "symbol" and rt.value == "(" then
+                                    returnParenDepth += 1
+                                    j += 1
+                                elseif rt.kind == "symbol" and rt.value == ")" then
+                                    if returnParenDepth == 0 then
                                         j += 1
-                                    elseif rt.kind == "symbol" and rt.value == ")" then
-                                        if returnParenDepth == 0 then
-                                            j += 1
-                                            break
-                                        else
-                                            returnParenDepth -= 1
-                                            j += 1
-                                        end
-                                    elseif rt.kind == "symbol" and rt.value == "->" then
-                                        j += 1
+                                        break
                                     else
-                                        -- Stop skipping type if we're not in parens
-                                        if returnParenDepth == 0 then
-                                            break
-                                        end
+                                        returnParenDepth -= 1
                                         j += 1
                                     end
+                                elseif rt.kind == "symbol" and rt.value == "->" then
+                                    j += 1
+                                else
+                                    -- Stop skipping type if we're not in parens
+                                    if returnParenDepth == 0 then
+                                        break
+                                    end
+                                    j += 1
                                 end
                             end
-                            
-                            -- Now find the first actual statement in the function body
-                            -- Skip to the first meaningful token that's not part of signature
-                            while j <= #tokens do
-                                local bt = tokens[j]
-                                -- Find the first token that indicates actual code
-                                if bt.kind == "keyword" then
-                                    if bt.value == "end" then
-                                        bodyLineNo = bt.line
-                                        break
-                                    elseif bt.value ~= "nil" and bt.value ~= "true" and bt.value ~= "false" then
-                                        -- Found a statement keyword (local, if, return, etc)
-                                        bodyLineNo = bt.line
-                                        break
-                                    end
-                                elseif bt.kind == "identifier" then
-                                    -- Function call or assignment
+                        end
+                        
+                        -- Now find the first actual statement in the function body
+                        -- Skip to the first meaningful token that's not part of signature
+                        while j <= #tokens do
+                            local bt = tokens[j]
+                            -- Find the first token that indicates actual code
+                            if bt.kind == "keyword" then
+                                if bt.value == "end" then
+                                    bodyLineNo = bt.line
+                                    break
+                                elseif bt.value ~= "nil" and bt.value ~= "true" and bt.value ~= "false" then
+                                    -- Found a statement keyword (local, if, return, etc)
                                     bodyLineNo = bt.line
                                     break
                                 end
-                                j += 1
+                            elseif bt.kind == "identifier" then
+                                -- Function call or assignment
+                                bodyLineNo = bt.line
+                                break
                             end
-                            break
+                            j += 1
                         end
+                        break
                     end
                 end
-                
-                -- If we couldn't find params, just use next line after function keyword
-                if not bodyLineNo then
-                    bodyLineNo = token.line + 1
-                end
-                
-                -- Register function
-                local fnId = coverage.nextFnId
-                coverage.nextFnId += 1
-                coverage.fnMap[fnId] = {
-                    name = funcName,
-                    line = token.line,                    file = filePath,                    loc = { start = { line = token.line, column = 0 }, ["end"] = { line = token.line, column = 0 } }
-                }
-                
-                -- Mark this line for function instrumentation
-                functionDeclarationLines[token.line] = fnId
+            end
+            
+            -- If we couldn't find params, just use next line after function keyword
+            if not bodyLineNo then
+                bodyLineNo = token.line + 1
+            end
+            
+            -- Register function
+            local fnId = coverage.nextFnId
+            coverage.nextFnId += 1
+            coverage.fnMap[fnId] = {
+                name = funcName,
+                line = token.line,
+                file = filePath,
+                loc = { start = { line = token.line, column = 0 }, ["end"] = { line = token.line, column = 0 } }
+            }
+            
+            -- Mark this line for function instrumentation
+            functionDeclarationLines[token.line] = fnId
+            
+            -- Instrument function body unless it's an anonymous function on the same line as its declaration
+            if funcName ~= "<anonymous>" or bodyLineNo ~= token.line then
                 functionInstrumentedLines[bodyLineNo] = true
             end
         end

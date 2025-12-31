@@ -394,10 +394,10 @@ local function replaceTernaryExpression(lines: {string}, startLine: number, endL
             if (currentLineNo ~= startLine) then
                 if functionDeclarationLines[currentLineNo] then
                     local modStr = "_G.__covfn(" .. tostring(functionDeclarationLines[currentLineNo]) .. ");"
-                    if trimmed:find("end") then
-                        local beforeEnd = trimmed:gsub("(%s*end%s*)$", "")
-                        local endPart = trimmed:match("(%s*end%s*)$") or "end"
-                        lineText = indent .. beforeEnd .. " " .. modStr .. " " .. endPart:gsub("^%s*", "")
+                    local endMatch = trimmed:match("(%s*end%s*)$")
+                    if endMatch then
+                        local beforeEnd = trimmed:sub(1, #trimmed - #endMatch)
+                        lineText = indent .. beforeEnd .. " " .. modStr .. " " .. endMatch:gsub("^%s*", "")
                     else
                         lineText = lineText .. " " .. modStr
                     end
@@ -918,10 +918,10 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                 -- For function declarations, append the modification, but insert before 'end' if present
                 local currentIndent = string.match(text, "^(%s*)") or ""
                 local currentTrimmed = string.match(text, "^%s*(.-)$") or ""
-                if currentTrimmed:find("end") then
-                    local beforeEnd = currentTrimmed:gsub("(%s*end%s*)$", "")
-                    local endPart = currentTrimmed:match("(%s*end%s*)$") or "end"
-                    instrumented[#instrumented + 1] = currentIndent .. beforeEnd .. " " .. modStr .. " " .. endPart:gsub("^%s*", "")
+                local endMatch = currentTrimmed:match("(%s*end%s*)$")
+                if endMatch then
+                    local beforeEnd = currentTrimmed:sub(1, #currentTrimmed - #endMatch)
+                    instrumented[#instrumented + 1] = currentIndent .. beforeEnd .. " " .. modStr .. " " .. endMatch:gsub("^%s*", "")
                 else
                     instrumented[#instrumented + 1] = text .. " " .. modStr
                 end

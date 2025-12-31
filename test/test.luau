@@ -703,5 +703,25 @@ end]])
 	expect(added).toBe(6)
 end)
 
+addTest("regression: instrumentSource Error.extend", function()
+    local coverage = parser.ensureCoverage()
+    local source = [[function Error:extend(options)
+    options = options or {}
+
+    options.kind = options.kind or self.kind
+
+    return Error.new(options, self)
+end]]
+    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+    expect(instrumented).toBe([[function Error:extend(options) _G.__covfn(1);
+    _G.__covhit(1); options = options or {}
+
+    _G.__covhit(2); options.kind = options.kind or self.kind
+
+    _G.__covhit(3); return Error.new(options, self)
+end]])
+    expect(added).toBe(4)
+end)
+
 -- Run the tests
 runTests()

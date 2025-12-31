@@ -47,6 +47,7 @@ end
 local KEYWORDS = {
     ["and"] = true,
     ["break"] = true,
+    ["continue"] = true,
     ["do"] = true,
     ["else"] = true,
     ["elseif"] = true,
@@ -65,6 +66,17 @@ local KEYWORDS = {
     ["then"] = true,
     ["true"] = true,
     ["until"] = true,
+    ["while"] = true,
+}
+
+local STATEMENT_KEYWORDS = {
+    ["break"] = true,
+    ["continue"] = true,
+    ["do"] = true,
+    ["for"] = true,
+    ["local"] = true,
+    ["repeat"] = true,
+    ["return"] = true,
     ["while"] = true,
 }
 
@@ -251,20 +263,11 @@ function parser.shouldInstrument(token: Token?): boolean
     if CLOSING_KEYWORDS[token.value] then
         return false
     end
-    -- Don't instrument function definitions/literals
-    if token.kind == "keyword" and token.value == "function" then
-        return false
-    end
-    -- Don't instrument if statements
-    if token.kind == "keyword" and token.value == "if" then
-        return false
-    end
-    -- Don't instrument bare literal values (true, false, nil)
-    if token.value == "true" or token.value == "false" or token.value == "nil" then
-        return false
-    end
-    if KEYWORDS[token.value] then
+    if token.kind == "identifier" then
         return true
+    end
+    if token.kind == "keyword" then
+        return STATEMENT_KEYWORDS[token.value] == true
     end
     return false
 end
@@ -709,7 +712,27 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
         end
         
         -- Add statement instrumentation if needed
-        if (parser.shouldInstrument(token) and trimmed ~= "" and not linesInCondition[lineNo] and not functionInstrumentedLines[lineNo]) and not isTernaryLine then
+        local isContinuation = false
+        if token then
+            local tokenInfoList = tokensByLine[lineNo]
+            local firstTokenInfo = tokenInfoList and tokenInfoList[1]
+            if firstTokenInfo and firstTokenInfo.index > 1 then
+                local prev = tokens[firstTokenInfo.index - 1]
+                if prev.kind == "symbol" then
+                    local v = prev.value
+                    if v == "(" or v == "[" or v == "{" or v == "," or v == "=" or v == "+" or v == "-" or v == "*" or v == "/" or v == "//" or v == "%" or v == "^" or v == ".." or v == "==" or v == "~=" or v == "<" or v == ">" or v == "<=" or v == ">=" or v == "." or v == ":" or v == "::" or v == "->" then
+                        isContinuation = true
+                    end
+                elseif prev.kind == "keyword" then
+                    local v = prev.value
+                    if v == "and" or v == "or" or v == "not" or v == "in" then
+                        isContinuation = true
+                    end
+                end
+            end
+        end
+
+        if (parser.shouldInstrument(token) and trimmed ~= "" and not linesInCondition[lineNo] and not functionInstrumentedLines[lineNo] and not isContinuation) and not isTernaryLine then
             local id = coverage.nextId
             coverage.nextId += 1
             coverage.map[id] = { file = filePath, line = lineNo }

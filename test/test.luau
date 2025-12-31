@@ -139,7 +139,7 @@ addTest("shouldInstrument", function()
 	expect(parser.shouldInstrument(token :: any)).toBe(false)
 
 	token = { kind = "identifier", value = "x" }
-	expect(parser.shouldInstrument(token :: any)).toBe(false)
+	expect(parser.shouldInstrument(token :: any)).toBe(true)
 
 	expect(parser.shouldInstrument(nil)).toBe(false)
 end)
@@ -447,10 +447,10 @@ end]]
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
 	expect(instrumented).toBe([[if x then
   _G.__covbranch(1, 0); if y then
-    _G.__covbranch(2, 0); z()
+    _G.__covbranch(2, 0); _G.__covhit(1); z()
   end
 end]])
-	expect(added).toBe(2)
+	expect(added).toBe(3)
 end)
 
 addTest("instrumentSource with if-elseif-else", function()
@@ -464,11 +464,11 @@ end]]
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
 	expect(instrumented).toBe([[if x then
 _G.__covbranch(1, 0); elseif y then
-  _G.__covbranch(1, 1); b()
+  _G.__covbranch(1, 1); _G.__covhit(1); b()
 else
-  _G.__covbranch(1, 2); c()
+  _G.__covbranch(1, 2); _G.__covhit(2); c()
 end]])
-	expect(added).toBe(3)
+	expect(added).toBe(5)
 end)
 
 addTest("instrumentSource with comments", function()
@@ -523,15 +523,15 @@ addTest("instrumentSource with multi-line elseif condition", function()
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
 	expect(instrumented).toBe(
 		"if x then"
-			.. "\n\t_G.__covbranch(1, 0); a()"
+			.. "\n\t_G.__covbranch(1, 0); _G.__covhit(1); a()"
 			.. "\nelseif"
 			.. '\n\ttype(x) == "table"'
 			.. '\n\tand type(y) == "table"'
 			.. "\nthen"
-			.. "\n\t_G.__covbranch(1, 1); b()"
+			.. "\n\t_G.__covbranch(1, 1); _G.__covhit(2); b()"
 			.. "\nend"
 	)
-	expect(added).toBe(2)
+	expect(added).toBe(4)
 end)
 
 addTest("instrumentSource elseif with body on next line", function()
@@ -545,13 +545,13 @@ then
 end]]
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
 	expect(instrumented).toBe([[if x then
-    _G.__covbranch(1, 0); a()
+    _G.__covbranch(1, 0); _G.__covhit(1); a()
 elseif
     y
 then
-    _G.__covbranch(1, 1); b()
+    _G.__covbranch(1, 1); _G.__covhit(2); b()
 end]])
-	expect(added).toBe(2)
+	expect(added).toBe(4)
 end)
 
 addTest("instrumentSource with function literal in method call", function()
@@ -564,14 +564,14 @@ addTest("instrumentSource with function literal in method call", function()
         function() end
     )]]
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-    expect(instrumented).toBe([[self
+    expect(instrumented).toBe([[_G.__covhit(1); self
     :finally(function() _G.__covfn(1);
-        _G.__covhit(1); task.spawn(thread)
+        _G.__covhit(2); task.spawn(thread)
     end)
     :catch(
         function() _G.__covfn(2); end
     )]])
-    expect(added).toBe(3)
+    expect(added).toBe(4)
 end)
 
 addTest("instrumentSource with literal in function call arguments", function()
@@ -580,12 +580,12 @@ addTest("instrumentSource with literal in function call arguments", function()
         describe :: FIXME_ANALYZE,
         false
     )]]
-	-- local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-	-- expect(instrumented).toBe([[_G.__covhit(1); bindEach(
-    --     describe :: FIXME_ANALYZE,
-    --     false
-    -- )]])
-    -- expect(added).toBe(1)
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe([[_G.__covhit(1); bindEach(
+        describe :: FIXME_ANALYZE,
+        false
+    )]])
+    expect(added).toBe(1)
 end)
 
 addTest("instrumentSource with multi-line function signature", function()

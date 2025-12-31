@@ -603,7 +603,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                                     end
                                 elseif rt.kind == "symbol" and rt.value == "->" then
                                     j += 1
-                                elseif rt.kind == "symbol" and (rt.value == "." or rt.value == ":" or rt.value == "?" or rt.value == "|" or rt.value == "&" or rt.value == "{" or rt.value == "}" or rt.value == "[" or rt.value == "]" or rt.value == ",") then
+                                elseif rt.kind == "symbol" and (rt.value == "." or rt.value == ":" or rt.value == "?" or rt.value == "|" or rt.value == "&" or rt.value == "{" or rt.value == "}" or rt.value == "[" or rt.value == "]" or rt.value == "," or rt.value == "<" or rt.value == ">") then
                                     j += 1
                                 elseif rt.kind == "identifier" then
                                     j += 1

@@ -801,6 +801,35 @@ end]])
     expect(added).toBe(7)
 end)
 
+addTest("regression: instrumentSource JestEach.each", function()
+    local coverage = parser.ensureCoverage()
+    local source = [[return setmetatable({
+    withGlobal = function(g: Global)
+        return function(table_: Global_EachTable, ...)
+            return install(g, maybeHandleTemplateString(table_), ...)
+        end
+    end,
+}, {
+    __call = function(_self, table_: Global_EachTable, ...): ReturnType<typeof(install)>
+        -- ROBLOX deviation: jestMethods, are passed as parameters, not taken from global
+        return install(jestMethods :: Global, maybeHandleTemplateString(table_), ...)
+    end,
+})]]
+    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+    expect(instrumented).toBe([[_G.__covhit(1); return setmetatable({
+    withGlobal = function(g: Global) _G.__covfn(1);
+        _G.__covhit(2); return function(table_: Global_EachTable, ...) _G.__covfn(2);
+            _G.__covhit(3); return install(g, maybeHandleTemplateString(table_), ...)
+        end
+    end,
+}, {
+    __call = function(_self, table_: Global_EachTable, ...): ReturnType<typeof(install)> _G.__covfn(3);
+        -- ROBLOX deviation: jestMethods, are passed as parameters, not taken from global
+        _G.__covhit(4); return install(jestMethods :: Global, maybeHandleTemplateString(table_), ...)
+    end,
+})]])
+    expect(added).toBe(7)
+end)
 
 
 

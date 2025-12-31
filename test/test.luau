@@ -723,5 +723,63 @@ end]])
     expect(added).toBe(4)
 end)
 
+addTest("regression: instrumentSource circus.test.todo", function()
+    local coverage = parser.ensureCoverage()
+    local source = [[test.todo = function(testName: Circus_TestName, ...: any): ()
+    local rest = { ... }
+    if #rest > 0 or typeof(testName) ~= "string" then
+        error(ErrorWithStack.new("Todo must be called with only a description.", test.todo))
+    end
+    return _addTest(testName, "todo", function() end, test.todo)
+end]]
+    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+    expect(instrumented).toBe([[test.todo = function(testName: Circus_TestName, ...: any): () _G.__covfn(1);
+    _G.__covhit(1); local rest = { ... }
+    if #rest > 0 or typeof(testName) ~= "string" then
+        _G.__covbranch(1, 0); _G.__covhit(2); error(ErrorWithStack.new("Todo must be called with only a description.", test.todo))
+    end
+    return _addTest(testName, "todo", function() _G.__covfn(2); end, test.todo)
+end]])
+    expect(added).toBe(5)
+end)
+
+addTest("regression: instrumentSource JestEnvironmentLuau.new", function()
+    local coverage = parser.ensureCoverage()
+    local source = [[local JestEnvironmentLuau = {} :: JestEnvironmentLuau;
+(JestEnvironmentLuau :: any).__index = JestEnvironmentLuau
+
+function JestEnvironmentLuau.new(config: Config_ProjectConfig): JestEnvironmentLuau
+	local self = setmetatable({}, JestEnvironmentLuau)
+
+	self.context = {}
+	local global = Object.assign(self.context, config.testEnvironmentOptions)
+	self.global = global
+	global.global = global
+
+	self.fakeTimers = JestFakeTimers.new()
+
+	return (self :: any) :: JestEnvironmentLuau
+end
+]]
+    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+    expect(instrumented).toBe([[_G.__covhit(1); local JestEnvironmentLuau = {} :: JestEnvironmentLuau;
+_G.__covhit(2); (JestEnvironmentLuau :: any).__index = JestEnvironmentLuau
+
+function JestEnvironmentLuau.new(config: Config_ProjectConfig): JestEnvironmentLuau _G.__covfn(1);
+	_G.__covhit(3); local self = setmetatable({}, JestEnvironmentLuau)
+
+	_G.__covhit(4); self.context = {}
+	_G.__covhit(5); local global = Object.assign(self.context, config.testEnvironmentOptions)
+	_G.__covhit(6); self.global = global
+	_G.__covhit(7); global.global = global
+
+	_G.__covhit(8); self.fakeTimers = JestFakeTimers.new()
+
+	_G.__covhit(9); return (self :: any) :: JestEnvironmentLuau
+end
+]])
+    expect(added).toBe(10)
+end)
+
 -- Run the tests
 runTests()

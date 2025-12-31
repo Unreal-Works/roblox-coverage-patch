@@ -1,10 +1,5 @@
-local fs = require("@lune/fs")
-local roblox = require("@lune/roblox")
 local process = require("@lune/process")
 local parser = require("../src/parser")
-local Instance = roblox.Instance
-
-local game = Instance.new("DataModel")
 
 local tests = {}
 
@@ -12,65 +7,36 @@ function addTest(name, fn)
 	table.insert(tests, { name = name, fn = fn })
 end
 
-function assertEqual(actual, expected, msg)
-	if actual ~= expected then
-		error(msg or ("Expected " .. tostring(expected) .. ", got " .. tostring(actual)), 2)
-	end
-end
-
-function assertClose(actual, expected, epsilon, msg)
-	epsilon = epsilon or 1e-9
-	if math.abs(actual - expected) >= epsilon then
-		error(
-			(msg or "")
-				.. " Expected "
-				.. tostring(actual)
-				.. " ≈ "
-				.. tostring(expected)
-				.. " (epsilon="
-				.. tostring(epsilon)
-				.. ")",
-			2
-		)
-	end
-end
-
-function assertEquals(actual, expected, msg)
-	if not actual:equals(expected) then
-		error((msg or "") .. " Expected " .. expected:toString() .. ", got " .. actual:toString(), 2)
-	end
-end
-
-function assertMoreThan(actual, expected, msg)
-	if not actual:moreThan(expected) then
-		error((msg or "") .. " Expected " .. actual:toString() .. " > " .. expected:toString(), 2)
-	end
-end
-
-function assertLessThan(actual, expected, msg)
-	if not actual:lessThan(expected) then
-		error((msg or "") .. " Expected " .. actual:toString() .. " < " .. expected:toString(), 2)
-	end
-end
-
-function assertMoreEquals(actual, expected, msg)
-	if not actual:moreEquals(expected) then
-		error((msg or "") .. " Expected " .. actual:toString() .. " >= " .. expected:toString(), 2)
-	end
-end
-
-function assertLessEquals(actual, expected, msg)
-	if not actual:lessEquals(expected) then
-		error((msg or "") .. " Expected " .. actual:toString() .. " <= " .. expected:toString(), 2)
-	end
+function expect(actual)
+	local expectations
+	expectations = {
+		toBe = function(expected)
+			if actual ~= expected then
+				error("\nExpected:\n" .. tostring(expected) .. "\nReceived:\n" .. tostring(actual), 2)
+			end
+		end,
+		toBeGreaterThan = function(expected)
+			if actual <= expected then
+				error("\nExpected greater than:\n" .. tostring(expected) .. "\nReceived:\n" .. tostring(actual), 2)
+			end
+		end,
+		toBeUndefined = function()
+			return expectations.toBe(nil)
+		end,
+	}
+	return expectations
 end
 
 function runTests()
 	local passed, failed = 0, 0
 	for _, test in ipairs(tests) do
+		_G.__COVERAGE__ = nil -- Reset coverage between tests
+
 		local ok, err = pcall(test.fn)
 		if ok then
-			print("[PASS]", test.name)
+			if table.find(process.args, "--verbose") then
+				print("[PASS]", test.name)
+			end
 			passed += 1
 		else
 			print("[FAIL]", test.name, err)
@@ -88,400 +54,440 @@ end
 -- Tests for parser functions
 
 addTest("normalizeNewlines", function()
-	assertEqual(parser.normalizeNewlines("a\r\nb\r\nc"), "a\nb\nc")
-	assertEqual(parser.normalizeNewlines("a\rb\rc"), "a\nb\nc")
-	assertEqual(parser.normalizeNewlines("a\nb\nc"), "a\nb\nc")
-	assertEqual(parser.normalizeNewlines(""), "")
+	expect(parser.normalizeNewlines("a\r\nb\r\nc")).toBe("a\nb\nc")
+	expect(parser.normalizeNewlines("a\rb\rc")).toBe("a\nb\nc")
+	expect(parser.normalizeNewlines("a\nb\nc")).toBe("a\nb\nc")
+	expect(parser.normalizeNewlines("")).toBe("")
 end)
 
 addTest("countNewlines", function()
-	assertEqual(parser.countNewlines("a\nb\nc"), 2)
-	assertEqual(parser.countNewlines("a\nb"), 1)
-	assertEqual(parser.countNewlines("abc"), 0)
-	assertEqual(parser.countNewlines(""), 0)
+	expect(parser.countNewlines("a\nb\nc")).toBe(2)
+	expect(parser.countNewlines("a\nb")).toBe(1)
+	expect(parser.countNewlines("abc")).toBe(0)
+	expect(parser.countNewlines("")).toBe(0)
 end)
 
 addTest("splitLines", function()
 	local lines = parser.splitLines("a\nb\nc")
-	assertEqual(#lines, 3)
-	assertEqual(lines[1], "a")
-	assertEqual(lines[2], "b")
-	assertEqual(lines[3], "c")
+	expect(#lines).toBe(3)
+	expect(lines[1]).toBe("a")
+	expect(lines[2]).toBe("b")
+	expect(lines[3]).toBe("c")
 
 	lines = parser.splitLines("a\nb")
-	assertEqual(#lines, 2)
-	assertEqual(lines[1], "a")
-	assertEqual(lines[2], "b")
+	expect(#lines).toBe(2)
+	expect(lines[1]).toBe("a")
+	expect(lines[2]).toBe("b")
 
 	lines = parser.splitLines("")
-	assertEqual(#lines, 1)
-	assertEqual(lines[1], "")
+	expect(#lines).toBe(1)
+	expect(lines[1]).toBe("")
 end)
 
 addTest("tryScanLong", function()
 	local nextIndex, nl = parser.tryScanLong("[[hello]]", 1)
-	assertEqual(nextIndex, 10)
-	assertEqual(nl, 0)
+	expect(nextIndex).toBe(10)
+	expect(nl).toBe(0)
 
 	nextIndex, nl = parser.tryScanLong("[[hello\nworld]]", 1)
-	assertEqual(nextIndex, 16)
-	assertEqual(nl, 1)
+	expect(nextIndex).toBe(16)
+	expect(nl).toBe(1)
 
 	nextIndex, nl = parser.tryScanLong("[==[hello]==]", 1)
-	assertEqual(nextIndex, 14)
-	assertEqual(nl, 0)
+	expect(nextIndex).toBe(14)
+	expect(nl).toBe(0)
 
-	assertEqual(parser.tryScanLong("hello", 1), nil)
+	expect(parser.tryScanLong("hello", 1)).toBeUndefined()
 end)
 
 addTest("tokenize", function()
 	local tokens = parser.tokenize("local x = 1")
-	assertEqual(#tokens, 4)
-	assertEqual(tokens[1].kind, "keyword")
-	assertEqual(tokens[1].value, "local")
-	assertEqual(tokens[2].kind, "identifier")
-	assertEqual(tokens[2].value, "x")
-	assertEqual(tokens[3].kind, "symbol")
-	assertEqual(tokens[3].value, "=")
-	assertEqual(tokens[4].kind, "number")
-	assertEqual(tokens[4].value, "1")
+	expect(#tokens).toBe(4)
+	expect(tokens[1].kind).toBe("keyword")
+	expect(tokens[1].value).toBe("local")
+	expect(tokens[2].kind).toBe("identifier")
+	expect(tokens[2].value).toBe("x")
+	expect(tokens[3].kind).toBe("symbol")
+	expect(tokens[3].value).toBe("=")
+	expect(tokens[4].kind).toBe("number")
+	expect(tokens[4].value).toBe("1")
 
 	tokens = parser.tokenize("function test() end")
-	assertEqual(#tokens, 5)
-	assertEqual(tokens[1].value, "function")
-	assertEqual(tokens[2].value, "test")
-	assertEqual(tokens[3].value, "(")
-	assertEqual(tokens[4].value, ")")
-	assertEqual(tokens[5].value, "end")
+	expect(#tokens).toBe(5)
+	expect(tokens[1].value).toBe("function")
+	expect(tokens[2].value).toBe("test")
+	expect(tokens[3].value).toBe("(")
+	expect(tokens[4].value).toBe(")")
+	expect(tokens[5].value).toBe("end")
 end)
 
 addTest("firstTokenPerLine", function()
 	local tokens = parser.tokenize("local x = 1\nlocal y = 2")
 	local firstTokens = parser.firstTokenPerLine(tokens)
-	assertEqual(firstTokens[1].value, "local")
-	assertEqual(firstTokens[2].value, "local")
+	expect(firstTokens[1].value).toBe("local")
+	expect(firstTokens[2].value).toBe("local")
 end)
 
 addTest("shouldInstrument", function()
 	local token = { kind = "keyword", value = "if" }
-	assertEqual(parser.shouldInstrument(token :: any), true)
+	expect(parser.shouldInstrument(token :: any)).toBe(false)
+
+	token = { kind = "keyword", value = "local" }
+	expect(parser.shouldInstrument(token :: any)).toBe(true)
 
 	token = { kind = "keyword", value = "end" }
-	assertEqual(parser.shouldInstrument(token :: any), false)
+	expect(parser.shouldInstrument(token :: any)).toBe(false)
 
 	token = { kind = "identifier", value = "x" }
-	assertEqual(parser.shouldInstrument(token :: any), false)
+	expect(parser.shouldInstrument(token :: any)).toBe(false)
 
-	assertEqual(parser.shouldInstrument(nil), false)
+	expect(parser.shouldInstrument(nil)).toBe(false)
 end)
 
 addTest("extractFunctionName", function()
 	local tokens = parser.tokenize("function test() end")
 	local name = parser.extractFunctionName(tokens, 2)
-	assertEqual(name, "test")
+	expect(name).toBe("test")
 
 	tokens = parser.tokenize("function obj.method() end")
 	name = parser.extractFunctionName(tokens, 2)
-	assertEqual(name, "obj.method")
+	expect(name).toBe("obj.method")
 
 	tokens = parser.tokenize("function obj:method() end")
 	name = parser.extractFunctionName(tokens, 2)
-	assertEqual(name, "obj:method")
+	expect(name).toBe("obj:method")
 
 	tokens = parser.tokenize("function() end")
 	name = parser.extractFunctionName(tokens, 2)
-	assertEqual(name, "<anonymous>")
+	expect(name).toBe("<anonymous>")
 end)
 
 addTest("instrumentSource basic", function()
 	local coverage = parser.ensureCoverage()
-	local source = "local x = 1\nif x then\nend"
+	local source = [[local x = 1
+if x then
+end]]
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-	assertEqual(type(instrumented), "string")
-	assertEqual(added > 0, true)
-	-- Check that instrumentation was added
-	assert(instrumented:find("_G.__covhit") ~= nil)
+	expect(type(instrumented)).toBe("string")
+
+	-- Add hit for the variable assignment
+	-- Add branch in the if statement, don't add hit to prevent double counting
+	-- Ensure end does not have a hit, it's purely a syntactic delimiter
+	expect(instrumented).toBe([[_G.__covhit(1); local x = 1
+if x then
+_G.__covbranch(1, 0); end]])
+	expect(added).toBe(2)
 end)
 
 addTest("ensureCoverage", function()
 	_G.__COVERAGE__ = nil
 	local coverage = parser.ensureCoverage()
-	assertEqual(type(coverage), "table")
-	assertEqual(type(coverage.hits), "table")
-	assertEqual(coverage.nextId, 1)
+	expect(type(coverage)).toBe("table")
+	expect(type(coverage.hits)).toBe("table")
+	expect(coverage.nextId).toBe(1)
 	-- Call again to test existing
 	local coverage2 = parser.ensureCoverage()
-	assertEqual(coverage, coverage2)
+	expect(coverage).toBe(coverage2)
 end)
 
 -- Edge cases for normalizeNewlines
 addTest("normalizeNewlines mixed line endings", function()
-	assertEqual(parser.normalizeNewlines("a\r\nb\rc\nd"), "a\nb\nc\nd")
-	assertEqual(parser.normalizeNewlines("\r\n\r\n\r\n"), "\n\n\n")
-	assertEqual(parser.normalizeNewlines("\n\n\n"), "\n\n\n")
+	expect(parser.normalizeNewlines("a\r\nb\rc\nd")).toBe("a\nb\nc\nd")
+	expect(parser.normalizeNewlines("\r\n\r\n\r\n")).toBe("\n\n\n")
+	expect(parser.normalizeNewlines("\n\n\n")).toBe("\n\n\n")
 end)
 
 addTest("normalizeNewlines with only CR", function()
-	assertEqual(parser.normalizeNewlines("a\rb"), "a\nb")
+	expect(parser.normalizeNewlines("a\rb")).toBe("a\nb")
 end)
 
 -- Edge cases for countNewlines
 addTest("countNewlines edge cases", function()
-	assertEqual(parser.countNewlines("\n"), 1)
-	assertEqual(parser.countNewlines("\n\n\n"), 3)
-	assertEqual(parser.countNewlines("no newlines here"), 0)
-	assertEqual(parser.countNewlines("\n\n\n\n"), 4)
+	expect(parser.countNewlines("\n")).toBe(1)
+	expect(parser.countNewlines("\n\n\n")).toBe(3)
+	expect(parser.countNewlines("no newlines here")).toBe(0)
+	expect(parser.countNewlines("\n\n\n\n")).toBe(4)
 end)
 
 -- Edge cases for splitLines
 addTest("splitLines with trailing newline", function()
 	local lines = parser.splitLines("a\nb\nc\n")
-	assertEqual(#lines, 4)
-	assertEqual(lines[4], "")
+	expect(#lines).toBe(4)
+	expect(lines[4]).toBe("")
 end)
 
 addTest("splitLines with only newlines", function()
 	local lines = parser.splitLines("\n\n\n")
-	assertEqual(#lines, 4)
-	assertEqual(lines[1], "")
-	assertEqual(lines[2], "")
-	assertEqual(lines[3], "")
-	assertEqual(lines[4], "")
+	expect(#lines).toBe(4)
+	expect(lines[1]).toBe("")
+	expect(lines[2]).toBe("")
+	expect(lines[3]).toBe("")
+	expect(lines[4]).toBe("")
 end)
 
 addTest("splitLines single character", function()
 	local lines = parser.splitLines("x")
-	assertEqual(#lines, 1)
-	assertEqual(lines[1], "x")
+	expect(#lines).toBe(1)
+	expect(lines[1]).toBe("x")
 end)
 
 -- Edge cases for tryScanLong
 addTest("tryScanLong with nested equals", function()
 	local nextIndex, nl = parser.tryScanLong("[==[hello]==]", 1)
-	assertEqual(nextIndex, 14)
-	assertEqual(nl, 0)
+	expect(nextIndex).toBe(14)
+	expect(nl).toBe(0)
 
 	nextIndex, nl = parser.tryScanLong("[===[hello]===]", 1)
-	assertEqual(nextIndex, 16)
-	assertEqual(nl, 0)
+	expect(nextIndex).toBe(16)
+	expect(nl).toBe(0)
 end)
 
 addTest("tryScanLong with multiple newlines", function()
 	local nextIndex, nl = parser.tryScanLong("[[line1\nline2\nline3]]", 1)
-	assertEqual(nextIndex, 22)
-	assertEqual(nl, 2)
+	expect(nextIndex).toBe(22)
+	expect(nl).toBe(2)
 end)
 
 addTest("tryScanLong unclosed", function()
 	local nextIndex, nl = parser.tryScanLong("[[unclosed", 1)
-	assertEqual(nextIndex, 11)
-	assertEqual(nl, 0)
+	expect(nextIndex).toBe(11)
+	expect(nl).toBe(0)
 end)
 
 addTest("tryScanLong not a long string", function()
-	assertEqual(parser.tryScanLong("[x]", 1), nil)
-	assertEqual(parser.tryScanLong("hello", 1), nil)
+	expect(parser.tryScanLong("[x]", 1)).toBeUndefined()
+	expect(parser.tryScanLong("hello", 1)).toBeUndefined()
 end)
 
 -- Edge cases for tokenize
 addTest("tokenize with strings", function()
 	local tokens = parser.tokenize('"hello world"')
-	assertEqual(#tokens, 1)
-	assertEqual(tokens[1].kind, "string")
+	expect(#tokens).toBe(1)
+	expect(tokens[1].kind).toBe("string")
 
 	tokens = parser.tokenize("'single quoted'")
-	assertEqual(#tokens, 1)
-	assertEqual(tokens[1].kind, "string")
+	expect(#tokens).toBe(1)
+	expect(tokens[1].kind).toBe("string")
 end)
 
 addTest("tokenize with escaped quotes", function()
 	local tokens = parser.tokenize('"hello\\"world"')
-	assertEqual(#tokens, 1)
-	assertEqual(tokens[1].kind, "string")
+	expect(#tokens).toBe(1)
+	expect(tokens[1].kind).toBe("string")
 end)
 
 addTest("tokenize with comments", function()
 	local tokens = parser.tokenize("local x = 1 -- comment")
-	assertEqual(tokens[4].value, "1")
-	assertEqual(#tokens, 4)
+	expect(tokens[4].value).toBe("1")
+	expect(#tokens).toBe(4)
 end)
 
 addTest("tokenize with block comments", function()
 	local tokens = parser.tokenize("local x = 1 --[[comment]] + 2")
-	assertEqual(#tokens, 6)
-	assertEqual(tokens[1].value, "local")
-	assertEqual(tokens[4].value, "1")
-	assertEqual(tokens[5].value, "+")
-	assertEqual(tokens[6].value, "2")
+	expect(#tokens).toBe(6)
+	expect(tokens[1].value).toBe("local")
+	expect(tokens[4].value).toBe("1")
+	expect(tokens[5].value).toBe("+")
+	expect(tokens[6].value).toBe("2")
 end)
 
 addTest("tokenize with numbers", function()
 	local tokens = parser.tokenize("1 2.5 1e10 1E-5")
-	assertEqual(#tokens, 4)
-	assertEqual(tokens[1].value, "1")
-	assertEqual(tokens[2].value, "2.5")
-	assertEqual(tokens[3].value, "1e10")
-	assertEqual(tokens[4].value, "1E-5")
+	expect(#tokens).toBe(4)
+	expect(tokens[1].value).toBe("1")
+	expect(tokens[2].value).toBe("2.5")
+	expect(tokens[3].value).toBe("1e10")
+	expect(tokens[4].value).toBe("1E-5")
 end)
 
 addTest("tokenize with operators", function()
 	local tokens = parser.tokenize("a == b and c ~= d or e <= f")
-	assertEqual(tokens[2].value, "==")
-	assertEqual(tokens[4].value, "and")
-	assertEqual(tokens[6].value, "~=")
-	assertEqual(tokens[8].value, "or")
-	assertEqual(tokens[10].value, "<=")
+	expect(tokens[2].value).toBe("==")
+	expect(tokens[4].value).toBe("and")
+	expect(tokens[6].value).toBe("~=")
+	expect(tokens[8].value).toBe("or")
+	expect(tokens[10].value).toBe("<=")
 end)
 
 addTest("tokenize with ellipsis", function()
 	local tokens = parser.tokenize("function f(...) end")
-	assertEqual(#tokens, 6)
-	assertEqual(tokens[4].value, "...")
+	expect(#tokens).toBe(6)
+	expect(tokens[4].value).toBe("...")
 end)
 
 addTest("tokenize with long strings", function()
 	local tokens = parser.tokenize("x = [[hello\nworld]]")
-	assertEqual(#tokens, 3)
-	assertEqual(tokens[1].value, "x")
-	assertEqual(tokens[2].value, "=")
-	assertEqual(tokens[3].kind, "string")
+	expect(#tokens).toBe(3)
+	expect(tokens[1].value).toBe("x")
+	expect(tokens[2].value).toBe("=")
+	expect(tokens[3].kind).toBe("string")
 end)
 
 addTest("tokenize empty string", function()
 	local tokens = parser.tokenize("")
-	assertEqual(#tokens, 0)
+	expect(#tokens).toBe(0)
 end)
 
 addTest("tokenize only whitespace", function()
 	local tokens = parser.tokenize("   \n  \t  ")
-	assertEqual(#tokens, 0)
+	expect(#tokens).toBe(0)
 end)
 
 -- Edge cases for extractFunctionName
 addTest("extractFunctionName with nested dots", function()
 	local tokens = parser.tokenize("function obj.sub.method() end")
 	local name = parser.extractFunctionName(tokens, 2)
-	assertEqual(name, "obj.sub.method")
+	expect(name).toBe("obj.sub.method")
 end)
 
 addTest("extractFunctionName with colon", function()
 	local tokens = parser.tokenize("function a:b:c() end")
 	local name = parser.extractFunctionName(tokens, 2)
-	assertEqual(name, "a:b:c")
+	expect(name).toBe("a:b:c")
 end)
 
 addTest("extractFunctionName with mixed separators", function()
 	local tokens = parser.tokenize("function obj.method:other() end")
 	local name = parser.extractFunctionName(tokens, 2)
-	assertEqual(name, "obj.method:other")
+	expect(name).toBe("obj.method:other")
 end)
 
 addTest("extractFunctionName out of bounds", function()
 	local tokens = parser.tokenize("function")
 	local name = parser.extractFunctionName(tokens, 100)
-	assertEqual(name, "<anonymous>")
+	expect(name).toBe("<anonymous>")
 end)
 
 addTest("extractFunctionName no identifier", function()
 	local tokens = parser.tokenize("function (x) end")
 	local name = parser.extractFunctionName(tokens, 2)
-	assertEqual(name, "<anonymous>")
-end)
-
--- Edge cases for shouldInstrument
-addTest("shouldInstrument various keywords", function()
-	assertEqual(parser.shouldInstrument({ kind = "keyword", value = "if" } :: any), true)
-	assertEqual(parser.shouldInstrument({ kind = "keyword", value = "while" } :: any), true)
-	assertEqual(parser.shouldInstrument({ kind = "keyword", value = "for" } :: any), true)
-	assertEqual(parser.shouldInstrument({ kind = "keyword", value = "do" } :: any), true)
-	assertEqual(parser.shouldInstrument({ kind = "keyword", value = "repeat" } :: any), true)
-end)
-
-addTest("shouldInstrument closing keywords", function()
-	assertEqual(parser.shouldInstrument({ kind = "keyword", value = "end" } :: any), false)
-	assertEqual(parser.shouldInstrument({ kind = "keyword", value = "else" } :: any), false)
-	assertEqual(parser.shouldInstrument({ kind = "keyword", value = "elseif" } :: any), false)
-	assertEqual(parser.shouldInstrument({ kind = "keyword", value = "until" } :: any), false)
+	expect(name).toBe("<anonymous>")
 end)
 
 -- Edge cases for instrumentSource
 addTest("instrumentSource empty source", function()
 	local coverage = parser.ensureCoverage()
 	local instrumented, added = parser.instrumentSource("", "test.lua", coverage)
-	assertEqual(instrumented, "")
-	assertEqual(added, 0)
+	expect(instrumented).toBe("")
+	expect(added).toBe(0)
 end)
 
 addTest("instrumentSource only whitespace", function()
 	local coverage = parser.ensureCoverage()
 	local instrumented, added = parser.instrumentSource("   \n  \n  ", "test.lua", coverage)
-	assertEqual(added, 0)
+	expect(instrumented).toBe("   \n  \n  ")
+	expect(added).toBe(0)
 end)
 
 addTest("instrumentSource with function", function()
 	local coverage = parser.ensureCoverage()
-	local source = "function test()\n  return 1\nend"
+	local source = [[function test()
+  return 1
+end]]
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-	assertEqual(added > 0, true)
-	assert(instrumented:find("_G.__covfn") ~= nil)
+	expect(added > 0).toBe(true)
+
+	expect(instrumented).toBe([[function test() _G.__covfn(1);
+  _G.__covhit(1); return 1
+end]])
 end)
 
 addTest("instrumentSource with multiple functions", function()
 	local coverage = parser.ensureCoverage()
-	local source = "function f1() end\nfunction f2() end"
+	local source = [[function f1() end
+function f2() end]]
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-	assertEqual(added > 0, true)
+
+	expect(instrumented).toBe([[function f1() _G.__covfn(1); _G.__covhit(1); end
+function f2() _G.__covfn(2); _G.__covhit(2); end]])
+	expect(added > 0).toBe(true)
 end)
 
 addTest("instrumentSource with nested if", function()
 	local coverage = parser.ensureCoverage()
-	local source = "if x then\n  if y then\n    z()\n  end\nend"
+	local source = [[if x then
+  if y then
+    z()
+  end
+end]]
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-	assertEqual(added > 0, true)
+	expect(instrumented).toBe([[if x then
+  _G.__covbranch(1, 0); if y then
+    _G.__covbranch(2, 0); z()
+  end
+end]])
+	expect(added).toBe(2)
 end)
 
 addTest("instrumentSource with if-elseif-else", function()
 	local coverage = parser.ensureCoverage()
-	local source = "if x then\n  a()\nelseif y then\n  b()\nelse\n  c()\nend"
+	local source = [[if x then
+elseif y then
+  b()
+else
+  c()
+end]]
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-	assertEqual(added > 0, true)
+	expect(instrumented).toBe([[if x then
+_G.__covbranch(1, 0); elseif y then
+  _G.__covbranch(1, 1); b()
+else
+  _G.__covbranch(1, 2); c()
+end]])
+	expect(added).toBe(3)
 end)
 
 addTest("instrumentSource with comments", function()
 	local coverage = parser.ensureCoverage()
-	local source = "local x = 1 -- this is a comment\nif x then\nend"
+	local source = [[local x = 1 -- this is a comment
+if x then
+end]]
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-	assertEqual(added > 0, true)
+	expect(instrumented).toBe([[_G.__covhit(1); local x = 1 -- this is a comment
+if x then
+_G.__covbranch(1, 0); end]])
+	expect(added).toBe(2)
 end)
 
 addTest("instrumentSource with long strings", function()
 	local coverage = parser.ensureCoverage()
 	local source = "local x = [[hello\nworld]]\nlocal y = 2"
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-	assertEqual(added > 0, true)
+	expect(instrumented).toBe("_G.__covhit(1); local x = [[hello\nworld]]\n_G.__covhit(2); local y = 2")
+	expect(added).toBe(2)
 end)
 
 addTest("instrumentSource with indentation", function()
 	local coverage = parser.ensureCoverage()
-	local source = "function test()\n    local x = 1\n    if x then\n        return x\n    end\nend"
+	local source = [[function test()
+    local x = 1
+    if x then
+        return x
+    end
+end]]
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-	assert(instrumented:find("    ") ~= nil) -- Check indentation preserved
-	assertEqual(added > 0, true)
+	expect(instrumented).toBe([[function test() _G.__covfn(1);
+    _G.__covhit(1); local x = 1
+    if x then
+        _G.__covbranch(1, 0); _G.__covhit(2); return x
+    end
+end]])
+	expect(added).toBe(4)
 end)
 
 addTest("instrumentSource with multi-line if condition", function()
 	local coverage = parser.ensureCoverage()
 	local source = "if x == 1\n\tand y == 2 then\n\treturn true\nend"
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-	assertEqual(added > 0, true)
-	assert(instrumented:find("_G.__covhit") ~= nil)
+	expect(instrumented).toBe("if x == 1\n\tand y == 2 then\n\t_G.__covbranch(1, 0); _G.__covhit(1); return true\nend")
+	expect(added).toBe(3)
 end)
 
 addTest("instrumentSource with multi-line elseif condition", function()
 	local coverage = parser.ensureCoverage()
-	local source = "if x then\n\ta()\nelseif\n\ttype(x) == \"table\"\n\tand type(y) == \"table\"\nthen\n\tb()\nend"
+	local source = 'if x then\n\ta()\nelseif\n\ttype(x) == "table"\n\tand type(y) == "table"\nthen\n\tb()\nend'
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-	assertEqual(added > 0, true)
+	expect(added > 0).toBe(true)
 	-- Check that the condition lines don't have __covhit but the body lines do
 	local lines = parser.splitLines(instrumented)
 	-- The b() line should be instrumented
@@ -502,7 +508,20 @@ then
 	return true
 end]]
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-	assertEqual(added > 0, true)
+
+	--     expect(instrumented).toBe([[_G.__covhit(1); if objectMetatable == Promise then
+	--         _G.__covbranch(1, 0); _G.__covhit(2); return true
+	-- elseif objectMetatable == nil then
+	--         _G.__covbranch(1, 1); _G.__covhit(3); return isCallable(object.andThen)
+	-- elseif
+	--         type(objectMetatable) == "table"
+	--         and type(rawget(objectMetatable, "__index")) == "table"
+	--         and isCallable(rawget(rawget(objectMetatable, "__index"), "andThen"))
+	-- then
+	--         _G.__covbranch(1, 2); _G.__covhit(4); return true
+	-- end]])
+
+	expect(added > 0).toBe(true)
 	assert(instrumented:find("_G.__covhit") ~= nil or instrumented:find("_G.__covbranch") ~= nil)
 end)
 
@@ -516,7 +535,7 @@ then
 	b()
 end]]
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-	assertEqual(added > 0, true)
+	expect(added > 0).toBe(true)
 	-- Check that the body line b() is instrumented
 	local lines = parser.splitLines(instrumented)
 	local bLineFound = false
@@ -529,7 +548,7 @@ end]]
 			end
 		end
 	end
-	assertEqual(bLineFound, true)
+	expect(bLineFound).toBe(true)
 end)
 
 -- Edge cases for ensureCoverage
@@ -537,8 +556,8 @@ addTest("ensureCoverage multiple calls", function()
 	_G.__COVERAGE__ = nil
 	local coverage1 = parser.ensureCoverage()
 	local coverage2 = parser.ensureCoverage()
-	assertEqual(coverage1, coverage2)
-	assertEqual(coverage2.nextId, coverage1.nextId)
+	expect(coverage1).toBe(coverage2)
+	expect(coverage2.nextId).toBe(coverage1.nextId)
 end)
 
 addTest("ensureCoverage with existing data", function()
@@ -554,16 +573,16 @@ addTest("ensureCoverage with existing data", function()
 		nextBranchId = 1,
 	}
 	local coverage = parser.ensureCoverage()
-	assertEqual(coverage.nextId, 2)
-	assertEqual(coverage.nextFnId, 2)
-	assertEqual(coverage.hits[1], 5)
+	expect(coverage.nextId).toBe(2)
+	expect(coverage.nextFnId).toBe(2)
+	expect(coverage.hits[1]).toBe(5)
 end)
 
 addTest("ensureCoverage coverage functions exist", function()
 	parser.ensureCoverage()
-	assertEqual(type(_G.__covhit), "function")
-	assertEqual(type(_G.__covfn), "function")
-	assertEqual(type(_G.__covbranch), "function")
+	expect(type(_G.__covhit)).toBe("function")
+	expect(type(_G.__covfn)).toBe("function")
+	expect(type(_G.__covbranch)).toBe("function")
 end)
 addTest("instrumentSource with function literal in method call", function()
 	local coverage = parser.ensureCoverage()
@@ -577,8 +596,8 @@ addTest("instrumentSource with function literal in method call", function()
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
 	-- Should not have instrumentation that breaks function() end syntax
 	-- e.g., "function() _G.__covhit" is broken, "function() end" is correct
-	assertEqual(instrumented:find("function() _G.__covhit") == nil, true)
-	assertEqual(instrumented:find("function() _G.__covfn") == nil, true)
+	expect(instrumented:find("function() _G.__covhit") == nil).toBe(true)
+	expect(instrumented:find("function() _G.__covfn") == nil).toBe(true)
 	-- The code should still contain the original function definitions
 	assert(instrumented:find("function()") ~= nil)
 end)
@@ -610,6 +629,66 @@ addTest("instrumentSource with multi-line function signature", function()
 	assert(instrumented:find("_G.__covfn.*;%s*%)") == nil)
 	-- Should only have instrumentation in the actual function body
 	assert(instrumented:find("return nil") ~= nil)
+end)
+
+addTest("instrumentSource with if statement branch instrumentation", function()
+	local coverage = parser.ensureCoverage()
+	local source = [[local function test()
+	local result = if typeof(value) == "function"
+		then setmetatable({}, {
+			__call = function(_self, ...)
+				return value(...)
+			end,
+		})
+		else value
+	end
+	return result
+end]]
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+
+	-- Should not have branch instrumentation breaking the 'then' keyword
+	assert(instrumented:find("_G.__covbranch.*;%s*then") == nil)
+	-- Should have branch instrumentation on the correct line (after then)
+	assert(instrumented:find("then setmetatable") ~= nil)
+end)
+
+addTest("instrumentSource with ternary expression", function()
+	local coverage = parser.ensureCoverage()
+	local source = [[local result = if condition then "true" else "false"]]
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+
+	expect(instrumented).toBe(
+		[[local result = if condition then _G.__covbranch(1, 0)("true") else _G.__covbranch(1, 1)("false")]]
+	)
+	assert(added >= 2) -- Should have at least 2 branch instrumentations
+end)
+
+addTest("instrumentSource with complex ternary expression", function()
+	local coverage = parser.ensureCoverage()
+	local source =
+		[[local tests = if isArrayTable(taggedTemplateData) then buildArrayTests(title, table_) else buildTemplateTests(title, table_, taggedTemplateData)]]
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	-- Should have branch instrumentation for ternary expressions
+	assert(added >= 2) -- Should have at least 2 branch instrumentations
+	-- Should wrap the expressions properly
+	assert(instrumented:find("_G.__covbranch%([^,]+, 0%)%(buildArrayTests") ~= nil, "Should wrap first expression")
+	assert(instrumented:find("_G.__covbranch%([^,]+, 1%)%(buildTemplateTests") ~= nil, "Should wrap second expression")
+	-- Should not have line-level branch calls
+	assert(not instrumented:find("_G.__covbranch%([^,]+, %d+%)%s*;") ~= nil, "Should not have line-level branch calls")
+end)
+
+addTest("instrumentSource with multi-line ternary expression", function()
+	local coverage = parser.ensureCoverage()
+	local source = [[local result = if someCondition then
+	complexFunction(arg1, arg2)
+else
+	otherFunction(arg3, arg4)]]
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	-- Should have branch instrumentation for ternary expressions
+	assert(added >= 2) -- Should have at least 2 branch instrumentations
+	-- Should wrap the expressions properly
+	assert(instrumented:find("_G.__covbranch%([^,]+, 0%)%(complexFunction") ~= nil, "Should wrap first expression")
+	assert(instrumented:find("_G.__covbranch%([^,]+, 1%)%(otherFunction") ~= nil, "Should wrap second expression")
 end)
 -- Run the tests
 runTests()

@@ -1003,7 +1003,17 @@ end]])
     expect(added).toBe(12)
 end)
 
-
+addTest("regression: instrumentSource circus.legacy-code-todo-rewrite.jestAdapter._addSnapshotData", function()
+    local coverage = parser.ensureCoverage()
+    local source = [[results.snapshot.unchecked = if not status.deleted then uncheckedCount else 0
+-- Copy the array to prevent memory leaks
+results.snapshot.uncheckedKeys = Array.from(uncheckedKeys)]]
+    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+    expect(instrumented).toBe([[_G.__covhit(1); results.snapshot.unchecked = if not status.deleted then _G.__covbranch(1, 0)(uncheckedCount) else _G.__covbranch(1, 1)(0)
+-- Copy the array to prevent memory leaks
+_G.__covhit(2); results.snapshot.uncheckedKeys = Array.from(uncheckedKeys)]])
+    expect(added).toBe(4)
+end)
 
 -- Run the tests
 runTests()

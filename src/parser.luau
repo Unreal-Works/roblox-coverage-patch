@@ -801,6 +801,28 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                             endTokenIdx = j - 1
                             depth = 0
                             break
+                        elseif firstTokens[t.line] == t and elseIdx and t.line > tokens[elseIdx].line then
+                            -- New line after else: stop unless previous token forces continuation
+                            local prev = tokens[j - 1]
+                            local continue = false
+                            if prev then
+                                if prev.kind == "symbol" then
+                                    local v = prev.value
+                                    if v == "(" or v == "[" or v == "{" or v == "," or v == "=" or v == "+" or v == "-" or v == "*" or v == "/" or v == "//" or v == "%" or v == "^" or v == ".." or v == "==" or v == "~=" or v == "<" or v == ">" or v == "<=" or v == ">=" or v == "." or v == ":" or v == "::" or v == "->" then
+                                        continue = true
+                                    end
+                                elseif prev.kind == "keyword" then
+                                    local v = prev.value
+                                    if v == "and" or v == "or" or v == "not" or v == "in" or v == "else" then
+                                        continue = true
+                                    end
+                                end
+                            end
+                            if not continue then
+                                endTokenIdx = j - 1
+                                depth = 0
+                                break
+                            end
                         else
                             -- If we hit the first token of a new line after the else
                             -- and the previous token closed an expression, treat that as the end.

@@ -366,6 +366,113 @@ local function replaceTernaryExpression(lines: {string}, startLine: number, endL
     local endPos = getTokenOffset(branchData.endTokenIdx)
     if not endPos then return lines[startLine], 1, 0 end
     local elseExprEnd = endPos + #tokens[branchData.endTokenIdx].value
+
+    -- Detect ternary expressions with elseif branches (3+ paths)
+    local elseifTokens = {}
+    do
+        local i = branchData.thenTokenIdx + 1
+        while i < branchData.elseIdx do
+            local tk = tokens[i]
+            if tk.kind == "keyword" and tk.value == "elseif" then
+                -- find the matching 'then' after this elseif
+                local thenIdx = nil
+                for j = i + 1, #tokens do
+                    if tokens[j].kind == "keyword" and tokens[j].value == "then" then
+                        thenIdx = j
+                        break
+                    end
+                end
+                if thenIdx then
+                    table.insert(elseifTokens, { elseifIdx = i, thenIdx = thenIdx })
+                end
+            end
+            i += 1
+        end
+    end
+    
+    if #elseifTokens > 0 then
+        -- Build branch segments: then branch, each elseif branch, else branch
+        local function tokenOffset(idx)
+            local o = getTokenOffset(idx)
+            if not o then return nil end
+            return o
+        end
+
+        local segments = {}
+
+        -- Helper to find first token after a given index
+        local function nextTokenIdx(idx)
+            if idx >= #tokens then return nil end
+            return idx + 1
+        end
+
+        -- First branch (after initial then)
+        local startTokIdx = nextTokenIdx(branchData.thenTokenIdx)
+        local startOffset = startTokIdx and tokenOffset(startTokIdx)
+        local firstSeparatorOffset = tokenOffset(elseifTokens[1].elseifIdx)
+        if startOffset and firstSeparatorOffset then
+            table.insert(segments, { path = 0, startOffset = startOffset, endOffset = firstSeparatorOffset })
+        else
+            return lines[startLine], 1, 0
+        end
+
+        -- Middle branches for each elseif
+        for idx, info in ipairs(elseifTokens) do
+            local branchStartTokIdx = nextTokenIdx(info.thenIdx)
+            local branchStartOffset = branchStartTokIdx and tokenOffset(branchStartTokIdx)
+            local branchEndOffset
+            if idx < #elseifTokens then
+                branchEndOffset = tokenOffset(elseifTokens[idx + 1].elseifIdx)
+            else
+                branchEndOffset = tokenOffset(branchData.elseIdx)
+            end
+
+            if branchStartOffset and branchEndOffset then
+                table.insert(segments, { path = idx, startOffset = branchStartOffset, endOffset = branchEndOffset })
+            else
+                return lines[startLine], 1, 0
+            end
+        end
+
+        -- Else branch
+        local elseStartTokIdx = nextTokenIdx(branchData.elseIdx)
+        local elseStartOffset = elseStartTokIdx and tokenOffset(elseStartTokIdx)
+        local elseEndOffset = tokenOffset(branchData.endTokenIdx)
+        if elseStartOffset and elseEndOffset then
+            elseEndOffset = elseEndOffset + #tokens[branchData.endTokenIdx].value
+            table.insert(segments, { path = #segments, startOffset = elseStartOffset, endOffset = elseEndOffset })
+        else
+            return lines[startLine], 1, 0
+        end
+
+        -- Assemble instrumented text by wrapping each branch expression
+        local parts = {}
+        local cursor = 0
+        for _, seg in ipairs(segments) do
+            -- keep everything up to expression start
+            parts[#parts + 1] = text:sub(cursor + 1, seg.startOffset)
+
+            -- Separate trailing whitespace before the next separator so it stays outside the wrapper
+            local exprEnd = seg.endOffset
+            while exprEnd > seg.startOffset and text:sub(exprEnd, exprEnd):match("%s") do
+                exprEnd -= 1
+            end
+            local trailing = text:sub(exprEnd + 1, seg.endOffset)
+
+            -- wrap expression
+            parts[#parts + 1] = string.format("%s(%d, %d)(%s)", "_G.__covbranch", branchId, seg.path, text:sub(seg.startOffset + 1, exprEnd))
+            -- restore trailing whitespace
+            parts[#parts + 1] = trailing
+
+            cursor = seg.endOffset
+        end
+        parts[#parts + 1] = text:sub(cursor + 1)
+
+        local instrumented = table.concat(parts)
+        local _, linesConsumed = text:gsub("\n", "\n")
+        linesConsumed = linesConsumed + 1
+        return instrumented, linesConsumed, 0
+    end
     
     -- Extract parts preserving EVERYTHING except where we inject
     local beforeThen = text:sub(1, thenPos)
@@ -534,6 +641,36 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
     local functionDeclarationLines = {}
     local branchInstrumentedLines = {}
     local branchAdded = 0
+
+    -- Track loop headers whose 'do' is on a separate line so we can avoid double-instrumenting the block start
+    local loopDoLines = {}
+
+    do
+        for idx, token in ipairs(tokens) do
+            if token.kind == "keyword" and (token.value == "for" or token.value == "while") then
+                local nestedFunctionDepth = 0
+                local j = idx + 1
+                while j <= #tokens do
+                    local t = tokens[j]
+                    if t.kind == "keyword" then
+                        if t.value == "function" then
+                            nestedFunctionDepth += 1
+                        elseif t.value == "end" then
+                            if nestedFunctionDepth > 0 then
+                                nestedFunctionDepth -= 1
+                            end
+                        elseif t.value == "do" and nestedFunctionDepth == 0 then
+                            if t.line ~= token.line then
+                                loopDoLines[t.line] = true
+                            end
+                            break
+                        end
+                    end
+                    j += 1
+                end
+            end
+        end
+    end
     
     -- Track which lines are inside if/elseif conditions (between if/elseif keyword and then keyword)
     local linesInCondition = {}
@@ -902,7 +1039,6 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                                 end
                             end
                         elseif depth == 1 and t.value == "elseif" then
-                            isTernary = false  -- current ternary replacement doesn't handle multiple branches
                             -- Find the 'then' after elseif
                             local elseifThenIdx = nil
                             for k = j + 1, #tokens do
@@ -1060,6 +1196,10 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
             end
         end
 
+        if loopDoLines[lNo] then
+            isContinuation = true
+        end
+
         -- Check body hits first (they get higher priority for IDs if they are at the start of the line)
         if functionInstrumentedLines[lNo] then
             for _, marker in ipairs(functionInstrumentedLines[lNo]) do
@@ -1108,12 +1248,13 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
         local linesToSkip = 0
         local lineHitId = lineHitIds[lineNo]
         local bodyHitMarkers = functionInstrumentedLines[lineNo]
-        local isTernaryLine = false
-        if branchInstrumentedLines[lineNo] and #branchInstrumentedLines[lineNo] >= 2 then
-            local branchId1 = branchInstrumentedLines[lineNo][1].branchId
-            local branchId2 = branchInstrumentedLines[lineNo][2].branchId
-            if branchId1 == branchId2 then
-                isTernaryLine = true
+        local ternaryInfo = nil
+        if branchInstrumentedLines[lineNo] then
+            for _, info in ipairs(branchInstrumentedLines[lineNo]) do
+                if info.isTernary then
+                    ternaryInfo = info
+                    break
+                end
             end
         end
 
@@ -1141,20 +1282,38 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
             end
         end
 
-        if isTernaryLine then
-            -- Parse and replace ternary expression
-            local branchInfo = branchInstrumentedLines[lineNo][1]
-            local branchId = branchInfo.branchId
+        if ternaryInfo then
+            -- Parse and replace ternary expression on this line
+            local branchId = ternaryInfo.branchId
             local branchData = coverage.branchMap[branchId]
-            
             local newText, consumed, internalAdded = replaceTernaryExpression(lines, lineNo, branchData.endLine, branchId, filePath, coverage, functionDeclarationLines, functionInstrumentedLines, linesInCondition, firstTokens, tokensByLine, tokens, branchData, lineHitIds)
-            
+
             if newText ~= lines[lineNo] then
                 text = newText
                 linesToSkip = consumed - 1  -- Skip the consumed lines
-                branchAdded += 2 + (internalAdded or 0)
+                local branchCount = #branchData.locations
+                branchAdded += branchCount + (internalAdded or 0)
                 -- Clear lineInsertions as they are now invalid for this modified line
                 lineInsertions = {}
+
+                -- Remove ternary branch entries so they are not also emitted as plain branches
+                if branchInstrumentedLines[lineNo] then
+                    local filtered = {}
+                    for _, info in ipairs(branchInstrumentedLines[lineNo]) do
+                        if info.branchId ~= branchId or not info.isTernary then
+                            table.insert(filtered, info)
+                        end
+                    end
+                    branchInstrumentedLines[lineNo] = filtered
+                end
+
+                -- Emit any remaining non-ternary branch instrumentation on this line (e.g., outer branches)
+                if branchInstrumentedLines[lineNo] then
+                    for _, bInfo in ipairs(branchInstrumentedLines[lineNo]) do
+                        table.insert(modifications, "_G.__covbranch(" .. tostring(bInfo.branchId) .. ", " .. tostring(bInfo.pathIndex) .. ");")
+                        branchAdded += 1
+                    end
+                end
             else
                 -- Fallback to line-level instrumentation if parsing fails
                 for _, bInfo in ipairs(branchInstrumentedLines[lineNo]) do

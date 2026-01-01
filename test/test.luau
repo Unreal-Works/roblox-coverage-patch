@@ -1125,8 +1125,43 @@ end]])
 	expect(added).toBe(3)
 end)
 
+addTest("regression: instrumentSource RobloxShared.expect.getObjectSubset", function()
+	local coverage = parser.ensureCoverage()
+	local source = [[for i, key in
+    ipairs(Array.filter(Object.keys(object), function(key)
+        return hasPropertyInObject(subset, key)
+    end))
+do
+    print(i, key)
+end]]
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe([[_G.__covhit(1); for i, key in
+    ipairs(Array.filter(Object.keys(object), function(key) _G.__covfn(1);
+        _G.__covhit(2); return hasPropertyInObject(subset, key)
+    end))
+do
+    _G.__covhit(3); print(i, key)
+end]])
+	expect(added).toBe(4)
+end)
 
-
+addTest("regression: instrumentSource ReactElement.getType", function()
+	local coverage = parser.ensureCoverage()
+	local source = [[if metatable ~= nil and typeof(metatable.__call) == "function" then
+    return if Boolean.toJSBoolean(type_.displayName)
+        then type_.displayName
+        elseif Boolean.toJSBoolean(type_.name) then type_.name
+        else "Unknown"
+end]]
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe([[if metatable ~= nil and typeof(metatable.__call) == "function" then
+    _G.__covbranch(1, 0); _G.__covhit(1); return if Boolean.toJSBoolean(type_.displayName)
+        then _G.__covbranch(2, 0)(type_.displayName)
+        elseif Boolean.toJSBoolean(type_.name) then _G.__covbranch(2, 1)(type_.name)
+        else _G.__covbranch(2, 2)("Unknown")
+end]])
+	expect(added).toBe(5)
+end)
 
 -- Run the tests
 runTests()

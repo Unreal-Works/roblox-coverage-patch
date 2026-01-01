@@ -961,5 +961,49 @@ end]])
     expect(added).toBe(5)
 end)
 
+addTest("regression: instrumentSource circus.formatNodeAssertErrors", function()
+    local coverage = parser.ensureCoverage()
+    local source = [[if originalError == nil then
+    error_ = asyncError
+    -- ROBLOX deviation START: additional logic to handle Promise library error
+elseif originalError.kind == "ExecutionError" then
+    error_ = normalizePromiseError(originalError)
+    -- ROBLOX deviation END
+elseif not Boolean.toJSBoolean(originalError.stack) then
+    error_ = asyncError
+
+    error_.message = if Boolean.toJSBoolean(originalError.message)
+        then originalError.message
+        else ("thrown: %s"):format(prettyFormat(originalError, { maxDepth = 3 }))
+    -- ROBLOX deviation START: add __recalculateStacktrace after message has been altered
+    Error.__recalculateStacktrace(error_)
+    -- ROBLOX deviation END
+else
+    error_ = originalError
+end]]
+    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+    expect(instrumented).toBe([[if originalError == nil then
+    _G.__covbranch(1, 0); _G.__covhit(1); error_ = asyncError
+    -- ROBLOX deviation START: additional logic to handle Promise library error
+elseif originalError.kind == "ExecutionError" then
+    _G.__covbranch(1, 1); _G.__covhit(2); error_ = normalizePromiseError(originalError)
+    -- ROBLOX deviation END
+elseif not Boolean.toJSBoolean(originalError.stack) then
+    _G.__covbranch(1, 2); _G.__covhit(3); error_ = asyncError
+
+    _G.__covhit(4); error_.message = if Boolean.toJSBoolean(originalError.message)
+        then _G.__covbranch(2, 0)(originalError.message)
+        else _G.__covbranch(2, 1)(("thrown: %s"):format(prettyFormat(originalError, { maxDepth = 3 })))
+    -- ROBLOX deviation START: add __recalculateStacktrace after message has been altered
+    _G.__covhit(5); Error.__recalculateStacktrace(error_)
+    -- ROBLOX deviation END
+else
+    _G.__covbranch(1, 3); _G.__covhit(6); error_ = originalError
+end]])
+    expect(added).toBe(12)
+end)
+
+
+
 -- Run the tests
 runTests()

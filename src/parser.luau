@@ -777,6 +777,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                 
                 -- Look for elseif/else/end to find other branches
                 local depth = 1
+                local inlineIfDepth = 0
                 local j = thenIdx + 1
                 local foundElse = false
                 
@@ -786,22 +787,55 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                     local t = tokens[j]
                     
                     if isTernary and depth == 1 and foundElse then
-                        -- For ternary expressions, we can stop when we find a token that indicates
-                        -- the end of the expression (after finding else)
+                        -- For ternary expressions, stop when we hit a token that clearly ends the branch
                         if t.kind == "symbol" and (t.value == ")" or t.value == "," or t.value == ";" or t.value == "]" or t.value == "}") then
                             endTokenIdx = j - 1
                             depth = 0
                             break
-                        elseif t.kind == "keyword" and (t.value == "local" or t.value == "return" or t.value == "end" or t.value == "if" or t.value == "do" or t.value == "for" or t.value == "while" or t.value == "repeat" or t.value == "until" or t.value == "break" or t.value == "continue" or t.value == "elseif") then
+                        elseif t.kind == "keyword" and (t.value == "local" or t.value == "return" or t.value == "end" or t.value == "if" or t.value == "do" or t.value == "for" or t.value == "while" or t.value == "repeat" or t.value == "until" or t.value == "break" or t.value == "continue" or t.value == "elseif" or t.value == "else") then
                             endTokenIdx = j - 1
                             depth = 0
                             break
+                        elseif t.kind == "comment" and elseIdx and t.line > tokens[elseIdx].line then
+                            -- Comment on a new line after else signals we've left the expression
+                            endTokenIdx = j - 1
+                            depth = 0
+                            break
+                        else
+                            -- If we hit the first token of a new line after the else
+                            -- and the previous token closed an expression, treat that as the end.
+                            local prev = tokens[j - 1]
+                            if prev and prev.kind == "symbol" and (prev.value == ")" or prev.value == "}" or prev.value == "]") and firstTokens[t.line] == t and t.line > prev.line and (not elseIdx or t.line > tokens[elseIdx].line) then
+                                endTokenIdx = j - 1
+                                depth = 0
+                                break
+                            end
                         end
                     end
 
                     if t.kind == "keyword" then
                         if t.value == "if" or t.value == "do" or t.value == "for" or t.value == "function" or t.value == "while" or t.value == "repeat" then
-                            depth += 1
+                            -- Treat inline/ternary-style if-expressions specially so they don't steal the outer else
+                            local isExpressionIf = false
+                            if t.value == "if" then
+                                local prevTok = tokens[j - 1]
+                                if prevTok then
+                                    if prevTok.kind == "symbol" and (prevTok.value == "(" or prevTok.value == "{" or prevTok.value == "[" or prevTok.value == "," or prevTok.value == "=") then
+                                        isExpressionIf = true
+                                    elseif prevTok.kind == "keyword" and (prevTok.value == "return" or prevTok.value == "local") then
+                                        isExpressionIf = true
+                                    elseif firstTokens[t.line] ~= t then
+                                        isExpressionIf = true
+                                    end
+                                end
+                            end
+
+                            if isExpressionIf then
+                                depth += 1
+                                inlineIfDepth += 1
+                            else
+                                depth += 1
+                            end
                         elseif t.value == "end" or t.value == "until" then
                             depth -= 1
                             if depth == 0 then
@@ -853,6 +887,10 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                                     table.insert(branchLocations, {start = {line = elseifBranchLine, column = 0}, ["end"] = {line = elseifBranchLine, column = 0}})
                                 end
                             end
+                        elseif inlineIfDepth > 0 and t.value == "else" then
+                            -- Close an inline if-expression without affecting the outer branch tracking
+                            depth -= 1
+                            inlineIfDepth -= 1
                         elseif depth == 1 and t.value == "else" then
                             foundElse = true
                             elseIdx = j

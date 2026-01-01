@@ -326,7 +326,7 @@ function parser.shouldInstrument(token: Token?): boolean
         return STATEMENT_KEYWORDS[token.value] == true
     end
     if token.kind == "symbol" then
-        return token.value == "(" or token.value == "{"
+        return token.value == "(" or token.value == "{" or token.value == "["
     end
     return false
 end
@@ -570,6 +570,9 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                             -- Skip the return type tokens until we find something that's not part of the type
                             local returnParenDepth = 0
                             local returnAngleDepth = 0
+                            local returnBraceDepth = 0
+                            local returnBracketDepth = 0
+
                             while j <= #tokens do
                                 local rt = tokens[j]
                                 local prev = tokens[j-1]
@@ -577,9 +580,9 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                                 -- If we hit a new line at depth 0, check if we should stop.
                                 -- We only continue across newlines if either the previous token
                                 -- or current token is a symbol that typically continues a type.
-                                if returnParenDepth == 0 and returnAngleDepth == 0 and rt.line > prev.line then
-                                    local rtIsCont = (rt.kind == "symbol" and (rt.value == "|" or rt.value == "&" or rt.value == "," or rt.value == "." or rt.value == ":" or rt.value == "->" or rt.value == "{" or rt.value == "[" or rt.value == "(" or rt.value == "<" or rt.value == "?"))
-                                    local prevIsCont = (prev.kind == "symbol" and (prev.value == "|" or prev.value == "&" or prev.value == "," or prev.value == "." or prev.value == ":" or prev.value == "->" or prev.value == "{" or prev.value == "[" or prev.value == "(" or prev.value == "<"))
+                                if returnParenDepth == 0 and returnAngleDepth == 0 and returnBraceDepth == 0 and returnBracketDepth == 0 and rt.line > prev.line then
+                                    local rtIsCont = (rt.kind == "symbol" and (rt.value == "|" or rt.value == "&" or rt.value == "," or rt.value == "." or rt.value == ":" or rt.value == "->" or rt.value == "?" or rt.value == "<"))
+                                    local prevIsCont = (prev.kind == "symbol" and (prev.value == "|" or prev.value == "&" or prev.value == "," or prev.value == "." or prev.value == ":" or prev.value == "->" or prev.value == "<"))
                                     if not rtIsCont and not prevIsCont then
                                         break
                                     end
@@ -590,10 +593,29 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                                     j += 1
                                 elseif rt.kind == "symbol" and rt.value == ")" then
                                     if returnParenDepth == 0 then
-                                        j += 1
                                         break
                                     else
                                         returnParenDepth -= 1
+                                        j += 1
+                                    end
+                                elseif rt.kind == "symbol" and rt.value == "{" then
+                                    returnBraceDepth += 1
+                                    j += 1
+                                elseif rt.kind == "symbol" and rt.value == "}" then
+                                    if returnBraceDepth == 0 then
+                                        break
+                                    else
+                                        returnBraceDepth -= 1
+                                        j += 1
+                                    end
+                                elseif rt.kind == "symbol" and rt.value == "[" then
+                                    returnBracketDepth += 1
+                                    j += 1
+                                elseif rt.kind == "symbol" and rt.value == "]" then
+                                    if returnBracketDepth == 0 then
+                                        break
+                                    else
+                                        returnBracketDepth -= 1
                                         j += 1
                                     end
                                 elseif rt.kind == "symbol" and rt.value == "<" then
@@ -606,7 +628,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                                     j += 1
                                 elseif rt.kind == "symbol" and rt.value == "->" then
                                     j += 1
-                                elseif rt.kind == "symbol" and (rt.value == "." or rt.value == ":" or rt.value == "?" or rt.value == "|" or rt.value == "&" or rt.value == "{" or rt.value == "}" or rt.value == "[" or rt.value == "]" or rt.value == ",") then
+                                elseif rt.kind == "symbol" and (rt.value == "." or rt.value == ":" or rt.value == "?" or rt.value == "|" or rt.value == "&" or rt.value == "," or rt.value == "...") then
                                     j += 1
                                 elseif rt.kind == "identifier" then
                                     j += 1
@@ -614,7 +636,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                                     j += 1
                                 else
                                     -- Stop skipping type if we're not in parens or angle brackets
-                                    if returnParenDepth == 0 and returnAngleDepth == 0 then
+                                    if returnParenDepth == 0 and returnAngleDepth == 0 and returnBraceDepth == 0 and returnBracketDepth == 0 then
                                         break
                                     end
                                     j += 1
@@ -630,17 +652,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                         while j <= #tokens do
                             local bt = tokens[j]
                             -- Find the first token that indicates actual code
-                            if bt.kind == "keyword" then
-                                if bt.value == "end" then
-                                    bodyLineNo = bt.line
-                                    break
-                                elseif bt.value ~= "nil" and bt.value ~= "true" and bt.value ~= "false" then
-                                    -- Found a statement keyword (local, if, return, etc)
-                                    bodyLineNo = bt.line
-                                    break
-                                end
-                            elseif bt.kind == "identifier" then
-                                -- Function call or assignment
+                            if parser.shouldInstrument(bt) or (bt.kind == "keyword" and bt.value == "end") then
                                 bodyLineNo = bt.line
                                 break
                             end

@@ -562,6 +562,18 @@ _G.__covhit(4); assert(`function hi`)]])
     expect(added).toBe(4)
 end)
 
+addTest("instrumentSource object assignments", function()
+    local coverage = parser.ensureCoverage()
+    local source = [[function meta:__newindex(key: unknown, value: unknown): ()
+    (original :: any)[key] = value
+end]]
+    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+    expect(instrumented).toBe([[function meta:__newindex(key: unknown, value: unknown): () _G.__covfn(1);
+    _G.__covhit(1); (original :: any)[key] = value
+end]])
+    expect(added).toBe(2)
+end)
+
 addTest("instrumentSource elseif with body on next line", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[if x then

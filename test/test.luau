@@ -1163,5 +1163,29 @@ end]])
 	expect(added).toBe(5)
 end)
 
+addTest("regression: instrumentSource ReactElement.getType isForwardRef case", function()
+	local coverage = parser.ensureCoverage()
+	local source = [[local functionName = if typeof(type_.render) == "function"
+        and Boolean.toJSBoolean(debug.info(type_.render, "n"))
+    then debug.info(type_.render, "n")
+    else if typeof(type_.render) == "table"
+        then if Boolean.toJSBoolean(type_.render.displayName)
+            then type_.render.displayName
+            elseif Boolean.toJSBoolean(type_.render.name) then type_.render.name
+            else ""
+        else ""]]
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe([[_G.__covhit(1); local functionName = if typeof(type_.render) == "function"
+        and Boolean.toJSBoolean(debug.info(type_.render, "n"))
+    then _G.__covbranch(1, 0)(debug.info(type_.render, "n"))
+    else _G.__covbranch(1, 1)(if typeof(type_.render) == "table"
+        then _G.__covbranch(2, 0)(if Boolean.toJSBoolean(type_.render.displayName)
+            then _G.__covbranch(3, 0)(type_.render.displayName)
+            elseif Boolean.toJSBoolean(type_.render.name) then _G.__covbranch(3, 1)(type_.render.name)
+            else _G.__covbranch(3, 2)(""))
+        else _G.__covbranch(2, 1)(""))]])
+	expect(added).toBe(8)
+end)
+
 -- Run the tests
 runTests()

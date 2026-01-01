@@ -332,7 +332,14 @@ function parser.shouldInstrument(token: Token?): boolean
 end
 
 --- Replace ternary expression with instrumented version
-local function replaceTernaryExpression(lines: {string}, startLine: number, endLine: number, branchId: number, filePath: string, coverage, functionDeclarationLines, functionInstrumentedLines, linesInCondition, firstTokens, tokensByLine, tokens, branchData, lineHitIds): (string, number, number)
+--- Forward declaration for recursive call
+local replaceTernaryExpression
+
+replaceTernaryExpression = function(lines: {string}, startLine: number, endLine: number, branchId: number, filePath: string, coverage, functionDeclarationLines, functionInstrumentedLines, linesInCondition, firstTokens, tokensByLine, tokens, branchData, lineHitIds, branchInstrumentedLines, processedBranchIds): (string, number, number)
+    -- Track which branch IDs we've already processed to avoid infinite recursion
+    processedBranchIds = processedBranchIds or {}
+    processedBranchIds[branchId] = true
+    
     local text = ""
     for i = startLine, math.min(endLine, #lines) do
         if i > startLine then text = text .. "\n" end
@@ -598,12 +605,295 @@ local function replaceTernaryExpression(lines: {string}, startLine: number, endL
         local instrumented, added = instrumentInternal(trimmed, partStartLine, partStartCol + #prefix)
         return instrumented, prefix, suffix, added
     end
+    
+    -- Helper to recursively instrument a ternary expression given its branch data
+    -- Returns: instrumentedContent, prefix, suffix, addedCount
+    local function instrumentNestedTernary(nestedBranchId, nestedBranchData)
+        processedBranchIds[nestedBranchId] = true
+        
+        local nestedThenPos = getTokenOffset(nestedBranchData.thenTokenIdx)
+        local nestedElsePos = getTokenOffset(nestedBranchData.elseIdx)
+        local nestedEndPos = getTokenOffset(nestedBranchData.endTokenIdx)
+        
+        if not nestedThenPos or not nestedElsePos or not nestedEndPos then
+            return nil, "", "", 0
+        end
+        
+        local nestedThenMatchEnd = nestedThenPos + #tokens[nestedBranchData.thenTokenIdx].value
+        local nestedElseMatchEnd = nestedElsePos + #tokens[nestedBranchData.elseIdx].value
+        local nestedExprEnd = nestedEndPos + #tokens[nestedBranchData.endTokenIdx].value
+        
+        -- Extract the nested ternary parts
+        local nestedIfPos = getTokenOffset(nestedBranchData.ifTokenIdx)
+        local nestedBeforeThen = text:sub(nestedIfPos + 1, nestedThenPos)
+        local nestedThenKeyword = text:sub(nestedThenPos + 1, nestedThenMatchEnd)
+        
+        -- Check for elseif tokens in this nested ternary (only at depth 1, not in nested ifs)
+        local nestedElseifTokens = {}
+        do
+            local i = nestedBranchData.thenTokenIdx + 1
+            local depth = 1  -- Start at depth 1 (we're inside the if)
+            while i < nestedBranchData.elseIdx do
+                local tk = tokens[i]
+                if tk.kind == "keyword" then
+                    if tk.value == "if" then
+                        depth += 1
+                    elseif tk.value == "end" then
+                        depth -= 1
+                    elseif tk.value == "elseif" and depth == 1 then
+                        -- Only collect elseif at depth 1 (same level as our if)
+                        local thenIdx = nil
+                        for j = i + 1, #tokens do
+                            if tokens[j].kind == "keyword" and tokens[j].value == "then" then
+                                thenIdx = j
+                                break
+                            end
+                        end
+                        if thenIdx then
+                            table.insert(nestedElseifTokens, { elseifIdx = i, thenIdx = thenIdx })
+                        end
+                    elseif tk.value == "else" and depth > 1 then
+                        -- An else at depth > 1 closes an inner inline if
+                        depth -= 1
+                    end
+                end
+                i += 1
+            end
+        end
+        
+        -- Handle elseif case
+        if #nestedElseifTokens > 0 then
+            local segments = {}
+            
+            -- First branch (after initial then)
+            local startTokIdx = nestedBranchData.thenTokenIdx + 1
+            local startOffset = getTokenOffset(startTokIdx)
+            local firstSeparatorOffset = getTokenOffset(nestedElseifTokens[1].elseifIdx)
+            if startOffset and firstSeparatorOffset then
+                table.insert(segments, { path = 0, startOffset = startOffset, endOffset = firstSeparatorOffset })
+            end
+            
+            -- Middle branches for each elseif
+            for idx, info in ipairs(nestedElseifTokens) do
+                local branchStartTokIdx = info.thenIdx + 1
+                local branchStartOffset = getTokenOffset(branchStartTokIdx)
+                local branchEndOffset
+                if idx < #nestedElseifTokens then
+                    branchEndOffset = getTokenOffset(nestedElseifTokens[idx + 1].elseifIdx)
+                else
+                    branchEndOffset = getTokenOffset(nestedBranchData.elseIdx)
+                end
+                
+                if branchStartOffset and branchEndOffset then
+                    table.insert(segments, { path = idx, startOffset = branchStartOffset, endOffset = branchEndOffset })
+                end
+            end
+            
+            -- Else branch
+            local elseStartTokIdx = nestedBranchData.elseIdx + 1
+            local elseStartOffset = getTokenOffset(elseStartTokIdx)
+            if elseStartOffset then
+                table.insert(segments, { path = #segments, startOffset = elseStartOffset, endOffset = nestedExprEnd })
+            end
+            
+            -- Build the instrumented nested expression with segments
+            local parts = {}
+            local cursor = nestedIfPos
+            for _, seg in ipairs(segments) do
+                parts[#parts + 1] = text:sub(cursor + 1, seg.startOffset)
+                
+                local exprEnd = seg.endOffset
+                while exprEnd > seg.startOffset and text:sub(exprEnd, exprEnd):match("%s") do
+                    exprEnd -= 1
+                end
+                local trailing = text:sub(exprEnd + 1, seg.endOffset)
+                
+                parts[#parts + 1] = string.format("_G.__covbranch(%d, %d)(%s)", nestedBranchId, seg.path, text:sub(seg.startOffset + 1, exprEnd))
+                parts[#parts + 1] = trailing
+                
+                cursor = seg.endOffset
+            end
+            
+            return table.concat(parts), "", "", #segments
+        end
+        
+        local nestedThenToElse = text:sub(nestedThenMatchEnd + 1, nestedElsePos)
+        local nestedElseKeyword = text:sub(nestedElsePos + 1, nestedElseMatchEnd)
+        local nestedElseToEnd = text:sub(nestedElseMatchEnd + 1, nestedExprEnd)
+        
+        local _, nestedThenLinesOffset = text:sub(1, nestedThenMatchEnd):gsub("\n", "\n")
+        local _, nestedElseLinesOffset = text:sub(1, nestedElseMatchEnd):gsub("\n", "\n")
+        
+        -- Process the then branch content - check for nested ternaries there too
+        local nestedInstrumentedThen, nestedPrefixThen, nestedSuffixThen, nestedThenAdded = instrumentPart(nestedThenToElse, startLine + nestedThenLinesOffset, tokens[nestedBranchData.thenTokenIdx].column + #tokens[nestedBranchData.thenTokenIdx].value)
+        
+        -- Check for nested ternaries in the then branch
+        if branchInstrumentedLines then
+            local thenStartLine = startLine + nestedThenLinesOffset
+            local thenToken = tokens[nestedBranchData.thenTokenIdx]
+            local elseTokenLine = tokens[nestedBranchData.elseIdx].line
+            
+            for lineNum = thenStartLine, elseTokenLine do
+                if branchInstrumentedLines[lineNum] then
+                    for _, info in ipairs(branchInstrumentedLines[lineNum]) do
+                        if info.isTernary and not processedBranchIds[info.branchId] then
+                            local innerBranchData = coverage.branchMap[info.branchId]
+                            if innerBranchData then
+                                local innerIfToken = tokens[innerBranchData.ifTokenIdx]
+                                
+                                -- Check if this inner ternary is within the then branch bounds
+                                if innerIfToken.line >= thenToken.line and innerBranchData.endLine <= elseTokenLine then
+                                    local innerInstrumented, _, _, innerAdded = instrumentNestedTernary(info.branchId, innerBranchData)
+                                    if innerInstrumented then
+                                        local innerIfPos = getTokenOffset(innerBranchData.ifTokenIdx)
+                                        local innerEndPos = getTokenOffset(innerBranchData.endTokenIdx)
+                                        local innerExprEnd = innerEndPos + #tokens[innerBranchData.endTokenIdx].value
+                                        
+                                        -- Calculate prefix and suffix relative to the then branch
+                                        local thenEndOffset = nestedThenMatchEnd
+                                        local innerPrefix = text:sub(thenEndOffset + 1, innerIfPos)
+                                        local innerSuffix = text:sub(innerExprEnd + 1, nestedElsePos)
+                                        
+                                        nestedPrefixThen = innerPrefix
+                                        nestedInstrumentedThen = innerInstrumented
+                                        nestedSuffixThen = innerSuffix
+                                        nestedThenAdded = innerAdded  -- Already includes branch count from recursive call
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        
+        -- Process the else branch content
+        local nestedInstrumentedElse, nestedPrefixElse, nestedSuffixElse, nestedElseAdded = instrumentPart(nestedElseToEnd, startLine + nestedElseLinesOffset, tokens[nestedBranchData.elseIdx].column + #tokens[nestedBranchData.elseIdx].value)
+        
+        -- Check for nested ternaries in the else branch
+        if branchInstrumentedLines then
+            local elseToken = tokens[nestedBranchData.elseIdx]
+            
+            for lineNum = elseToken.line, nestedBranchData.endLine do
+                if branchInstrumentedLines[lineNum] then
+                    for _, info in ipairs(branchInstrumentedLines[lineNum]) do
+                        if info.isTernary and not processedBranchIds[info.branchId] then
+                            local innerBranchData = coverage.branchMap[info.branchId]
+                            if innerBranchData then
+                                local innerIfToken = tokens[innerBranchData.ifTokenIdx]
+                                
+                                if innerIfToken.line == elseToken.line or innerIfToken.line == elseToken.line + 1 then
+                                    local innerInstrumented, _, _, innerAdded = instrumentNestedTernary(info.branchId, innerBranchData)
+                                    if innerInstrumented then
+                                        local innerIfPos = getTokenOffset(innerBranchData.ifTokenIdx)
+                                        local innerEndPos = getTokenOffset(innerBranchData.endTokenIdx)
+                                        local innerExprEnd = innerEndPos + #tokens[innerBranchData.endTokenIdx].value
+                                        
+                                        nestedPrefixElse = text:sub(nestedElseMatchEnd + 1, innerIfPos)
+                                        nestedInstrumentedElse = innerInstrumented
+                                        nestedSuffixElse = text:sub(innerExprEnd + 1, nestedExprEnd)
+                                        nestedElseAdded = innerAdded
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        
+        -- Build the instrumented nested expression
+        local nestedInstrumented = string.format("%s%s%s_G.__covbranch(%d, 0)(%s)%s%s%s_G.__covbranch(%d, 1)(%s)%s",
+            nestedBeforeThen, nestedThenKeyword, nestedPrefixThen, nestedBranchId, nestedInstrumentedThen, nestedSuffixThen, nestedElseKeyword, nestedPrefixElse, nestedBranchId, nestedInstrumentedElse, nestedSuffixElse)
+        
+        return nestedInstrumented, "", "", nestedThenAdded + nestedElseAdded + #nestedBranchData.locations
+    end
 
     local _, thenLinesOffset = text:sub(1, thenMatchEnd):gsub("\n", "\n")
     local _, elseLinesOffset = text:sub(1, elseMatchEnd):gsub("\n", "\n")
     
+    -- Process the then branch, checking for nested ternaries
     local instrumentedThen, prefixThen, suffixThen, thenAdded = instrumentPart(thenToElse, startLine + thenLinesOffset, tokens[branchData.thenTokenIdx].column + #tokens[branchData.thenTokenIdx].value)
-    local instrumentedElse, prefixElse, suffixElse, elseAdded = instrumentPart(elseToEnd, startLine + elseLinesOffset, tokens[branchData.elseIdx].column + #tokens[branchData.elseIdx].value)
+    
+    -- Check for nested ternaries in the then branch
+    if branchInstrumentedLines then
+        local thenStartLine = startLine + thenLinesOffset
+        local thenToken = tokens[branchData.thenTokenIdx]
+        local elseTokenLine = tokens[branchData.elseIdx].line
+        
+        for lineNum = thenStartLine, elseTokenLine do
+            if branchInstrumentedLines[lineNum] then
+                for _, info in ipairs(branchInstrumentedLines[lineNum]) do
+                    if info.isTernary and not processedBranchIds[info.branchId] then
+                        local innerBranchData = coverage.branchMap[info.branchId]
+                        if innerBranchData then
+                            local innerIfToken = tokens[innerBranchData.ifTokenIdx]
+                            
+                            if innerIfToken.line >= thenToken.line and innerBranchData.endLine <= elseTokenLine then
+                                local innerInstrumented, _, _, innerAdded = instrumentNestedTernary(info.branchId, innerBranchData)
+                                if innerInstrumented then
+                                    local innerIfPos = getTokenOffset(innerBranchData.ifTokenIdx)
+                                    local innerEndPos = getTokenOffset(innerBranchData.endTokenIdx)
+                                    local innerExprEnd = innerEndPos + #tokens[innerBranchData.endTokenIdx].value
+                                    
+                                    prefixThen = text:sub(thenMatchEnd + 1, innerIfPos)
+                                    instrumentedThen = innerInstrumented
+                                    suffixThen = text:sub(innerExprEnd + 1, elsePos)
+                                    thenAdded = innerAdded
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Process the else branch, checking for nested ternaries  
+    local instrumentedElse = elseToEnd
+    local prefixElse = ""
+    local suffixElse = ""
+    local elseAdded = 0
+    
+    if branchInstrumentedLines then
+        local elseToken = tokens[branchData.elseIdx]
+        local nestedFound = false
+        
+        for lineNum = elseToken.line, branchData.endLine do
+            if branchInstrumentedLines[lineNum] and not nestedFound then
+                for _, info in ipairs(branchInstrumentedLines[lineNum]) do
+                    if info.isTernary and not processedBranchIds[info.branchId] then
+                        local innerBranchData = coverage.branchMap[info.branchId]
+                        if innerBranchData then
+                            local innerIfToken = tokens[innerBranchData.ifTokenIdx]
+                            
+                            if innerIfToken.line == elseToken.line or innerIfToken.line == elseToken.line + 1 then
+                                local innerInstrumented, _, _, innerAdded = instrumentNestedTernary(info.branchId, innerBranchData)
+                                if innerInstrumented then
+                                    local innerIfPos = getTokenOffset(innerBranchData.ifTokenIdx)
+                                    local innerEndPos = getTokenOffset(innerBranchData.endTokenIdx)
+                                    local innerExprEnd = innerEndPos + #tokens[innerBranchData.endTokenIdx].value
+                                    
+                                    prefixElse = text:sub(elseMatchEnd + 1, innerIfPos)
+                                    instrumentedElse = innerInstrumented
+                                    suffixElse = text:sub(innerExprEnd + 1, elseExprEnd)
+                                    elseAdded = innerAdded
+                                    nestedFound = true
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        
+        if not nestedFound then
+            instrumentedElse, prefixElse, suffixElse, elseAdded = instrumentPart(elseToEnd, startLine + elseLinesOffset, tokens[branchData.elseIdx].column + #tokens[branchData.elseIdx].value)
+        end
+    else
+        instrumentedElse, prefixElse, suffixElse, elseAdded = instrumentPart(elseToEnd, startLine + elseLinesOffset, tokens[branchData.elseIdx].column + #tokens[branchData.elseIdx].value)
+    end
     
     -- Build the instrumented version by wrapping the results
     local instrumented = string.format("%s%s%s_G.__covbranch(%d, 0)(%s)%s%s%s_G.__covbranch(%d, 1)(%s)%s",
@@ -962,10 +1252,23 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                             endTokenIdx = j - 1
                             depth = 0
                             break
-                        elseif t.kind == "keyword" and (t.value == "local" or t.value == "return" or t.value == "end" or t.value == "if" or t.value == "do" or t.value == "for" or t.value == "while" or t.value == "repeat" or t.value == "until" or t.value == "break" or t.value == "continue" or t.value == "elseif" or t.value == "else") then
-                            endTokenIdx = j - 1
-                            depth = 0
-                            break
+                        elseif t.kind == "keyword" then
+                            -- Check if this keyword terminates the ternary expression
+                            local shouldTerminate = false
+                            if t.value == "local" or t.value == "return" or t.value == "end" or t.value == "do" or t.value == "for" or t.value == "while" or t.value == "repeat" or t.value == "until" or t.value == "break" or t.value == "continue" or t.value == "elseif" or t.value == "else" then
+                                shouldTerminate = true
+                            elseif t.value == "if" then
+                                -- Don't terminate if this is "else if" pattern (nested ternary)
+                                local prevTok = tokens[j - 1]
+                                if not prevTok or prevTok.kind ~= "keyword" or prevTok.value ~= "else" then
+                                    shouldTerminate = true
+                                end
+                            end
+                            if shouldTerminate then
+                                endTokenIdx = j - 1
+                                depth = 0
+                                break
+                            end
                         elseif t.kind == "comment" and elseIdx and t.line > tokens[elseIdx].line then
                             -- Comment on a new line after else signals we've left the expression
                             endTokenIdx = j - 1
@@ -1286,7 +1589,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
             -- Parse and replace ternary expression on this line
             local branchId = ternaryInfo.branchId
             local branchData = coverage.branchMap[branchId]
-            local newText, consumed, internalAdded = replaceTernaryExpression(lines, lineNo, branchData.endLine, branchId, filePath, coverage, functionDeclarationLines, functionInstrumentedLines, linesInCondition, firstTokens, tokensByLine, tokens, branchData, lineHitIds)
+            local newText, consumed, internalAdded = replaceTernaryExpression(lines, lineNo, branchData.endLine, branchId, filePath, coverage, functionDeclarationLines, functionInstrumentedLines, linesInCondition, firstTokens, tokensByLine, tokens, branchData, lineHitIds, branchInstrumentedLines, nil)
 
             if newText ~= lines[lineNo] then
                 text = newText

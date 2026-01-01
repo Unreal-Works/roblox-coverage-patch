@@ -3,11 +3,18 @@ local framework = require("./framework")
 
 local testFiles = {}
 
-for _, file in ipairs(fs.readDir("test")) do
-    if file:sub(-10) == ".test.luau" then
-        testFiles[#testFiles + 1] = "./" .. file:sub(1, -6)
+-- Recursively find all .test.luau files in the test directory
+local function findTestFiles(dir)
+    for _, item in ipairs(fs.readDir(dir)) do
+        local fullPath = dir .. "/" .. item
+        if fs.isDir(fullPath) then
+            findTestFiles(fullPath)
+        elseif item:match("%.test%.luau$") then
+            table.insert(testFiles, "." .. fullPath:sub(5, -6)) -- Remove the .luau extension
+        end
     end
 end
+findTestFiles("test")
 
 for _, testFile in ipairs(testFiles) do
     require(testFile)

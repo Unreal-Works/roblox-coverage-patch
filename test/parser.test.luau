@@ -2,7 +2,7 @@ local framework = require("./framework")
 local expect = framework.expect
 local describe = framework.describe
 local parser = require("../src/parser")
-local ensureCoverage = require("../src/utils/ensureCoverage")
+local ensureCoverage = require("../src/ensureCoverage")
 
 describe("tokenize", function()
 	local tokens = parser.tokenize("local x = 1")

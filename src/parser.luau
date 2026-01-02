@@ -1,7 +1,7 @@
-local computeModulePath = require("./utils/computeModulePath")
-local normalizeNewlines = require("./utils/string/normalizeNewLines")
-local tryScanLong = require("./utils/string/tryScanLong")
-local splitSourceByNewlines = require("./utils/string/splitSourceByNewlines")
+local computeModulePath = require("./computeModulePath")
+local normalizeNewlines = require("./string/normalizeNewLines")
+local tryScanLong = require("./string/tryScanLong")
+local splitSourceByNewlines = require("./string/splitSourceByNewlines")
 local parser = {}
 
 export type Token = {

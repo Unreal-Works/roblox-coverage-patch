@@ -1,7 +1,7 @@
-local framework = require("../../framework")
+local framework = require("../framework")
 local expect = framework.expect
 local describe = framework.describe
-local normalizeNewlines = require("../../../src/utils/string/normalizeNewlines")
+local normalizeNewlines = require("../../src/string/normalizeNewlines")
 
 describe("normalizeNewlines", function()
 	expect(normalizeNewlines("a\r\nb\r\nc")).toBe("a\nb\nc")

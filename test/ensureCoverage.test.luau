@@ -1,7 +1,7 @@
-local framework = require("../framework")
+local framework = require("./framework")
 local expect = framework.expect
 local describe = framework.describe
-local ensureCoverage = require("../../src/utils/ensureCoverage")
+local ensureCoverage = require("../src/ensureCoverage")
 
 describe("ensureCoverage", function()
 	_G.__COVERAGE__ = nil

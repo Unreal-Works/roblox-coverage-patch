@@ -1,7 +1,7 @@
-local framework = require("../../framework")
+local framework = require("../framework")
 local expect = framework.expect
 local describe = framework.describe
-local splitSourceByNewlines = require("../../../src/utils/string/splitSourceByNewlines")
+local splitSourceByNewlines = require("../../src/string/splitSourceByNewlines")
 
 describe("splitSourceByNewlines", function()
 	local lines = splitSourceByNewlines("a\nb\nc")

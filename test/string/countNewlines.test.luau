@@ -1,7 +1,7 @@
-local framework = require("../../framework")
+local framework = require("../framework")
 local expect = framework.expect
 local describe = framework.describe
-local countNewlines = require("../../../src/utils/string/countNewlines")
+local countNewlines = require("../../src/string/countNewlines")
 
 describe("countNewlines", function()
 	expect(countNewlines("a\nb\nc")).toBe(2)

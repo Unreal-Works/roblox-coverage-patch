@@ -1,7 +1,7 @@
-local framework = require("../../framework")
+local framework = require("../framework")
 local expect = framework.expect
 local describe = framework.describe
-local tryScanLong = require("../../../src/utils/string/tryScanLong")
+local tryScanLong = require("../../src/string/tryScanLong")
 
 describe("tryScanLong", function()
 	local nextIndex, nl = tryScanLong("[[hello]]", 1)

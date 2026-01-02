@@ -1,3 +1,4 @@
+local ensureCoverage = require("@self/ensureCoverage")
 local parser = require("@self/parser")
 local coverage = {}
 
@@ -34,12 +35,12 @@ end
 
 -- Instrument all modules in the specified include/exclude sets
 function coverage.instrument(include, exclude)
-	local coverageData = parser.ensureCoverage()
+	local coverageData = ensureCoverage()
 
 	exclude = exclude or {
-        game:GetService("ReplicatedStorage"):FindFirstChild("Packages")
-    }
-	
+		game:GetService("ReplicatedStorage"):FindFirstChild("Packages"),
+	}
+
 	-- Always exclude the coverage patch folder itself
 	local coverageFolder = game:GetService("ReplicatedStorage"):FindFirstChild("coverage")
 	if coverageFolder then
@@ -61,9 +62,9 @@ end
 
 -- Generate Istanbul-compatible coverage report
 function coverage.istanbul()
-	local coverageData = parser.ensureCoverage()
+	local coverageData = ensureCoverage()
 	local report = {}
-	
+
 	-- Process statements
 	for id, location in pairs(coverageData.map) do
 		local file = location.file
@@ -75,17 +76,17 @@ function coverage.istanbul()
 				branchMap = {},
 				s = {},
 				f = {},
-				b = {}
+				b = {},
 			}
 		end
 		local hits = coverageData.hits[id] or 0
 		report[file].statementMap[tostring(id)] = {
 			start = { line = location.line, column = 0 },
-			["end"] = { line = location.line, column = 0 }
+			["end"] = { line = location.line, column = 0 },
 		}
 		report[file].s[tostring(id)] = hits
 	end
-	
+
 	-- Process functions
 	for fnId, fnData in pairs(coverageData.fnMap) do
 		local file = fnData.file
@@ -98,24 +99,24 @@ function coverage.istanbul()
 					branchMap = {},
 					s = {},
 					f = {},
-					b = {}
+					b = {},
 				}
 			end
-			
+
 			local hits = coverageData.f[fnId] or 0
 			report[file].fnMap[tostring(fnId)] = {
 				name = fnData.name,
 				decl = {
 					start = { line = fnData.line, column = 0 },
-					["end"] = { line = fnData.line, column = 0 }
+					["end"] = { line = fnData.line, column = 0 },
 				},
 				loc = fnData.loc,
-				line = fnData.line
+				line = fnData.line,
 			}
 			report[file].f[tostring(fnId)] = hits
 		end
 	end
-	
+
 	-- Process branches
 	for branchId, branchData in pairs(coverageData.branchMap) do
 		local file = branchData.file
@@ -128,10 +129,10 @@ function coverage.istanbul()
 					branchMap = {},
 					s = {},
 					f = {},
-					b = {}
+					b = {},
 				}
 			end
-			
+
 			-- Build location array for this branch, filtering out invalid entries
 			local locations = {}
 			for i, loc in ipairs(branchData.locations) do
@@ -139,16 +140,16 @@ function coverage.istanbul()
 					table.insert(locations, loc)
 				end
 			end
-			
+
 			-- Only add branch if it has valid locations
 			if #locations >= 2 then
 				report[file].branchMap[tostring(branchId)] = {
 					type = branchData.type,
 					line = branchData.line,
-					loc = locations[1],  -- lcov expects a loc instead of locations
-					locations = locations
+					loc = locations[1], -- lcov expects a loc instead of locations
+					locations = locations,
 				}
-				
+
 				-- Get hit counts for each path
 				local branchHits = coverageData.b[branchId] or {}
 				local hitArray = {}
@@ -159,14 +160,14 @@ function coverage.istanbul()
 			end
 		end
 	end
-	
+
 	return report
 end
 
 -- Revert all instrumented modules back to their original state
 function coverage.cleanup()
-	local coverageData = parser.ensureCoverage()
-	
+	local coverageData = ensureCoverage()
+
 	for _, moduleInfo in ipairs(coverageData.originals) do
 		if moduleInfo.wasReplaced then
 			-- Module was replaced with a patched version
@@ -176,7 +177,7 @@ function coverage.cleanup()
 					moduleInfo.patchedModule:Destroy()
 				end)
 			end
-			
+
 			if moduleInfo.module then
 				pcall(function()
 					-- Restore original name (remove __cov_orig suffix)
@@ -193,7 +194,7 @@ function coverage.cleanup()
 			end
 		end
 	end
-	
+
 	-- Clear the originals tracking
 	coverageData.originals = {}
 end

@@ -1,0 +1,15 @@
+[package]
+name = "evilbocchi/roblox-coverage"
+version = "0.1.1"
+registry = "https://github.com/UpliftGames/wally-index"
+realm = "shared"
+exclude = [
+    "demo",
+    "demo_large",
+    "test",
+    "v2",
+    "package-lock.json",
+    "package.json",
+    "demo.project.json",
+    "tsconfig.json",
+]

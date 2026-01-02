@@ -1538,7 +1538,9 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 
 			-- Detect if this is an if expression based on context
 			local firstOnLine = firstTokens[token.line]
-			local isTernary = (firstOnLine ~= token)
+				local isTernary = (firstOnLine ~= token)
+				local thenInline = false
+				local elseInline = false
 			if not isTernary and i > 1 then
 				local prev = tokens[i - 1]
 				if
@@ -1549,18 +1551,20 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 				end
 			end
 
-			-- Additional heuristic: if 'then' is on a separate line and is the first token on that line,
-			-- this is likely a multi-line if-expression (ternary) pattern like:
-			-- if condition
-			--     then expression
-			--     else expression
-			if not isTernary and thenIdx then
-				local thenToken = tokens[thenIdx]
-				local thenFirstOnLine = firstTokens[thenToken.line]
-				if thenToken.line > token.line and thenFirstOnLine == thenToken then
-					isTernary = true
+				-- Heuristic: if there is content on the same line after 'then' (or later after 'else'),
+				-- treat this as an expression-style if (ternary) because the branch starts inline.
+				if thenIdx then
+					local k = thenIdx + 1
+					while k <= #tokens and tokens[k].line == tokens[thenIdx].line do
+						local tk = tokens[k]
+						if tk.kind ~= "comment" then
+							isTernary = true
+							thenInline = true
+							break
+						end
+						k += 1
+					end
 				end
-			end
 
 			if thenIdx then
 				-- Mark all lines between 'if' and 'then' as being in a condition
@@ -1779,6 +1783,17 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 						elseif depth == 1 and t.value == "elseif" then
 							-- Find the 'then' after elseif
 							local elseifThenIdx = nil
+
+							-- Inline content after 'else' means expression-style if
+							local m = j + 1
+							while m <= #tokens and tokens[m].line == t.line do
+								local tk = tokens[m]
+								if tk.kind ~= "comment" then
+									isTernary = true
+									break
+								end
+								m += 1
+							end
 							for k = j + 1, #tokens do
 								if tokens[k].kind == "keyword" and tokens[k].value == "then" then
 									elseifThenIdx = k
@@ -1826,6 +1841,18 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 						elseif depth == 1 and t.value == "else" then
 							foundElse = true
 							elseIdx = j
+
+							-- Inline content after 'else' means expression-style if
+							local m = j + 1
+							while m <= #tokens and tokens[m].line == t.line do
+								local tk = tokens[m]
+								if tk.kind ~= "comment" then
+									isTernary = true
+									elseInline = true
+									break
+								end
+								m += 1
+							end
 							-- Else branch starts on next line, but skip lines containing 'else'
 							if j + 1 <= #tokens then
 								local candidateLine = tokens[j + 1].line
@@ -1861,6 +1888,23 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 
 				if not endTokenIdx then
 					endTokenIdx = math.min(j, #tokens)
+				end
+
+				-- If we ended on a block terminator for this if-statement (depth returned to 0),
+				-- ensure we treat it as a statement-style branch rather than an expression ternary.
+				if depth == 0 then
+					local closingToken = tokens[endTokenIdx]
+					if closingToken and closingToken.kind == "keyword" then
+						if (closingToken.value == "end" or closingToken.value == "until") and not (thenInline or elseInline) then
+							isTernary = false
+						end
+					end
+				end
+
+				-- If we never saw inline branch content, prefer statement-style instrumentation
+				-- (covers empty bodies like `if x then elseif ...`).
+				if not thenInline and not elseInline and firstOnLine == token then
+					isTernary = false
 				end
 
 				-- For ternary expressions, if we reached the end of tokens and found else, we're done

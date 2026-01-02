@@ -853,3 +853,49 @@ end]]
 end]])
 	expect(added).toBe(8)
 end)
+
+describe("regression: instrumentSource Collections.printTableEntries", function()
+	local coverage = ensureCoverage()
+	local source = [=[if
+    -- ROBLOX deviation START: fix length check
+    -- result.length >= MAX_LENGTH --[[ ROBLOX CHECK: operator '>=' works only if either both arguments are strings or both are a number ]]
+    #result >= MAX_LENGTH
+    -- ROBLOX deviation END
+    and maxDepth > 1 --[[ ROBLOX CHECK: operator '>' works only if either both arguments are strings or both are a number ]]
+then
+    return stringify(object, math.floor(maxDepth / 2), maxWidth)
+elseif
+    -- ROBLOX deviation START: fix length check
+    -- result.length >= MAX_LENGTH --[[ ROBLOX CHECK: operator '>=' works only if either both arguments are strings or both are a number ]]
+    #result >= MAX_LENGTH
+    -- ROBLOX deviation END
+    and maxWidth > 1 --[[ ROBLOX CHECK: operator '>' works only if either both arguments are strings or both are a number ]]
+then
+    return stringify(object, maxDepth, math.floor(maxWidth / 2))
+else
+    return result
+end]=]
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe([=[if
+    -- ROBLOX deviation START: fix length check
+    -- result.length >= MAX_LENGTH --[[ ROBLOX CHECK: operator '>=' works only if either both arguments are strings or both are a number ]]
+    #result >= MAX_LENGTH
+    -- ROBLOX deviation END
+    and maxDepth > 1 --[[ ROBLOX CHECK: operator '>' works only if either both arguments are strings or both are a number ]]
+then
+    _G.__covbranch(1, 0); _G.__covhit(1); return stringify(object, math.floor(maxDepth / 2), maxWidth)
+elseif
+    -- ROBLOX deviation START: fix length check
+    -- result.length >= MAX_LENGTH --[[ ROBLOX CHECK: operator '>=' works only if either both arguments are strings or both are a number ]]
+    #result >= MAX_LENGTH
+    -- ROBLOX deviation END
+    and maxWidth > 1 --[[ ROBLOX CHECK: operator '>' works only if either both arguments are strings or both are a number ]]
+then
+    _G.__covbranch(1, 1); _G.__covhit(2); return stringify(object, maxDepth, math.floor(maxWidth / 2))
+else
+    _G.__covbranch(1, 2); _G.__covhit(3); return result
+end]=])
+	expect(added).toBe(6)
+end)
+
+

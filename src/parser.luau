@@ -318,6 +318,7 @@ replaceTernaryExpression = function(
 	local text = ""
 	for i = startLine, math.min(endLine, #lines) do
 		if i > startLine then
+
 			text = text .. "\n"
 		end
 		text = text .. lines[i]
@@ -914,26 +915,41 @@ replaceTernaryExpression = function(
 						local innerBranchData = coverage.branchMap[info.branchId]
 						if innerBranchData then
 							local innerIfToken = tokens[innerBranchData.ifTokenIdx]
+							local innerIfPos = getTokenOffset(innerBranchData.ifTokenIdx)
+							local innerEndPos = getTokenOffset(innerBranchData.endTokenIdx)
 
-							if innerIfToken.line >= thenToken.line and innerBranchData.endLine <= elseTokenLine then
+							if
+								innerIfPos
+								and innerIfToken.line >= thenToken.line
+								and innerIfPos < elsePos
+								and innerBranchData.endLine <= elseTokenLine
+							and innerEndPos
+							then
 								local innerInstrumented, _, _, innerAdded =
 									instrumentNestedTernary(info.branchId, innerBranchData)
 								if innerInstrumented then
-									local innerIfPos = getTokenOffset(innerBranchData.ifTokenIdx)
-									local innerEndPos = getTokenOffset(innerBranchData.endTokenIdx)
 									local innerExprEnd = innerEndPos + #tokens[innerBranchData.endTokenIdx].value
 
 									prefixThen = text:sub(thenMatchEnd + 1, innerIfPos)
 									instrumentedThen = innerInstrumented
 									suffixThen = text:sub(innerExprEnd + 1, elsePos)
 									thenAdded = innerAdded
+									processedBranchIds[info.branchId] = true
 								end
 							end
 						end
-					end
 				end
+		end
 			end
 		end
+	end
+
+	-- Move trailing comment lines (between then and else) outside the branch wrapper
+	local commentStartInThen = instrumentedThen:find("\n%s*%-%-")
+	if commentStartInThen then
+		suffixThen = instrumentedThen:sub(commentStartInThen) .. suffixThen
+		instrumentedThen = (instrumentedThen:sub(1, commentStartInThen - 1):match("^(.-)%s*$"))
+			or instrumentedThen
 	end
 
 	-- Process the else branch, checking for nested ternaries
@@ -986,6 +1002,7 @@ replaceTernaryExpression = function(
 											instrumentedElse = innerInstrumented
 											suffixElse = text:sub(innerExprEnd + 1, elseExprEnd)
 											elseAdded = innerAdded
+											processedBranchIds[info.branchId] = true
 											nestedFound = true
 											break
 										end
@@ -2117,6 +2134,19 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 		end
 
 		if ternaryInfos and #ternaryInfos > 0 then
+			-- Process outermost ternaries first so nested ones get marked processed and skipped
+			table.sort(ternaryInfos, function(a, b)
+				local ad = coverage.branchMap[a.branchId]
+				local bd = coverage.branchMap[b.branchId]
+				if ad and bd then
+					if ad.ifTokenIdx ~= bd.ifTokenIdx then
+						return ad.ifTokenIdx < bd.ifTokenIdx
+					end
+					return ad.endTokenIdx > bd.endTokenIdx
+				end
+				return a.branchId < b.branchId
+			end)
+
 			local singleLineTernaries = true
 			for _, info in ipairs(ternaryInfos) do
 				local bd = coverage.branchMap[info.branchId]
@@ -2132,22 +2162,22 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 				local maxConsumed = 1
 				local maxEndLine = lineNo
 				for _, info in ipairs(ternaryInfos) do
-					local branchData = coverage.branchMap[info.branchId]
-					if branchData and branchData.endLine > maxEndLine then
-						maxEndLine = branchData.endLine
+					local bd = coverage.branchMap[info.branchId]
+					if bd and bd.endLine > maxEndLine then
+						maxEndLine = bd.endLine
 					end
 				end
 
 				for _, info in ipairs(ternaryInfos) do
 					local branchId = info.branchId
 					if not processed[branchId] then
-						local branchData = coverage.branchMap[branchId]
-						if branchData then
+						local bd = coverage.branchMap[branchId]
+						if bd then
 							local _, consumed, internalAdded, exprStart, exprEnd, processedSet, exprReplacement =
 								replaceTernaryExpression(
 									lines,
 									lineNo,
-									branchData.endLine,
+									bd.endLine,
 									branchId,
 									filePath,
 									coverage,
@@ -2157,7 +2187,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 									firstTokens,
 									tokensByLine,
 									tokens,
-									branchData,
+									bd,
 									lineHitIds,
 									branchInstrumentedLines,
 									processed
@@ -2171,7 +2201,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 									text = exprReplacement,
 									branchId = branchId,
 									internalAdded = internalAdded or 0,
-									branchData = branchData,
+									branchData = bd,
 								})
 							end
 						end
@@ -2180,6 +2210,39 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 
 				if #replacements > 0 then
 					table.sort(replacements, function(a, b)
+						return a.startPos < b.startPos
+					end)
+
+					local filteredReps = {}
+					for _, rep in ipairs(replacements) do
+						local skip = false
+						for _, kept in ipairs(filteredReps) do
+							local overlaps = rep.startPos <= kept.endPos and rep.endPos >= kept.startPos
+							if overlaps then
+								local repSpan = rep.endPos - rep.startPos
+								local keptSpan = kept.endPos - kept.startPos
+								if rep.startPos >= kept.startPos and rep.endPos <= kept.endPos then
+									skip = true
+									break
+								elseif repSpan > keptSpan then
+									kept.skip = true
+								else
+									skip = true
+									break
+								end
+							end
+						end
+						for i = #filteredReps, 1, -1 do
+							if filteredReps[i].skip then
+								table.remove(filteredReps, i)
+							end
+						end
+						if not skip then
+							table.insert(filteredReps, rep)
+						end
+					end
+
+					table.sort(filteredReps, function(a, b)
 						return a.startPos > b.startPos
 					end)
 
@@ -2191,7 +2254,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 						blockText ..= lines[i]
 					end
 
-					for _, rep in ipairs(replacements) do
+					for _, rep in ipairs(filteredReps) do
 						blockText = blockText:sub(1, rep.startPos - 1) .. rep.text .. blockText:sub(rep.endPos + 1)
 						branchAdded += #rep.branchData.locations + (rep.internalAdded or 0)
 					end
@@ -2283,8 +2346,8 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 									.. ", "
 									.. tostring(bInfo.pathIndex)
 									.. ");"
-							)
-							branchAdded += 1
+						)
+						branchAdded += 1
 						end
 					end
 				else

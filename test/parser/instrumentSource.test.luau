@@ -898,4 +898,17 @@ end]=])
 	expect(added).toBe(6)
 end)
 
+describe("regression: instrumentSource Collections.printTableEntries", function()
+	local coverage = ensureCoverage()
+	local source = [[local name = if type(fn) == "function"
+    then debug.info(fn :: Function, "n")
+    -- ROBLOX deviation :
+    else if type(fn) == "table" then tostring(fn) else ""]]
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe([[_G.__covhit(1); local name = if type(fn) == "function"
+    then _G.__covbranch(1, 0)(debug.info(fn :: Function, "n"))
+    -- ROBLOX deviation :
+    else _G.__covbranch(1, 1)(if type(fn) == "table" then _G.__covbranch(2, 0)(tostring(fn)) else _G.__covbranch(2, 1)(""))]])
+	expect(added).toBe(5)
+end)
 

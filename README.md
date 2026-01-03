@@ -17,7 +17,7 @@ Code coverage instrumentation for Roblox Luau modules. This library injects ligh
 ## Quick start (demo)
 Prereqs: Node.js, Roblox Studio
 
-If you do not have Roblox Studio installed, you can specify a `ROBLOSECURITY` environment variable of a throwaway account to run luau on the cloud.
+If you do not have Roblox Studio installed, you can specify a `ROBLOSECURITY` environment variable of a throwaway account to run Luau on the cloud.
 
 ```bash
 npm install

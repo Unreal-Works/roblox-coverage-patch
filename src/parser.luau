@@ -163,8 +163,15 @@ function parser.tokenize(src: string): { Token }
 			while i <= len do
 				local c = string.sub(src, i, i)
 				if c == "\\" then
-					i += 2
-					column += 2
+					local nextChar = string.sub(src, i + 1, i + 1)
+					if nextChar == "\n" then
+						i += 2
+						line += 1
+						column = 0
+					else
+						i += 2
+						column += 2
+					end
 				elseif c == quote then
 					i += 1
 					column += 1

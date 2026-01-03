@@ -966,4 +966,57 @@ describe("regression: instrumentSource ReactComponentStackFrame.describeNativeCo
 	expect(added).toBe(5)
 end)
 
+describe("regression: instrumentSource RoboticCauldron", function()
+	local coverage = ensureCoverage()
+	local source = [[return Item.new(script.Name)
+    :setName("Robotic Cauldron")
+    :setDescription(
+        `When Move-Your-Droplets™ tried branching out from producing conveyors, they experimented with all sorts of different machinery.\   
+Their final creation before going back to their ways was this abomination of a cauldron on legs.\
+Scales with Power, maxing out at %cap%. Also provides a flat %flat% boost.`
+    )
+    :setDifficulty(Difficulty.Walkthrough)
+    :setPrice(CurrencyBundle.new():set("Funds", 1.5e36):set("Power", 6e18), 1)
+    :addPlaceableArea("BarrenIslands")
+    :soldAt(Class0Shop)
+    :setFormula(Formula.new():add(1):log(5):mul(840):add(500))
+    :setFormulaX("power")
+    :setFormulaXCap(CurrencyBundle.new():set("Power", 10e24))
+    :trait(FormulaBundled)
+    :setRatio("Power", 1)
+    :setRatio("Funds", 1200)
+    :setFlat("Skill", 5)
+    :setX(function()
+        return Server.Currency:get("Power")
+    end)
+    :apply(Furnace)
+    :setIsCauldron(true)
+    :exit()]]
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe([[_G.__covhit(1); return Item.new(script.Name)
+    :setName("Robotic Cauldron")
+    :setDescription(
+        `When Move-Your-Droplets™ tried branching out from producing conveyors, they experimented with all sorts of different machinery.\   
+Their final creation before going back to their ways was this abomination of a cauldron on legs.\
+Scales with Power, maxing out at %cap%. Also provides a flat %flat% boost.`
+    )
+    :setDifficulty(Difficulty.Walkthrough)
+    :setPrice(CurrencyBundle.new():set("Funds", 1.5e36):set("Power", 6e18), 1)
+    :addPlaceableArea("BarrenIslands")
+    :soldAt(Class0Shop)
+    :setFormula(Formula.new():add(1):log(5):mul(840):add(500))
+    :setFormulaX("power")
+    :setFormulaXCap(CurrencyBundle.new():set("Power", 10e24))
+    :trait(FormulaBundled)
+    :setRatio("Power", 1)
+    :setRatio("Funds", 1200)
+    :setFlat("Skill", 5)
+    :setX(function() _G.__covfn(1);
+        _G.__covhit(2); return Server.Currency:get("Power")
+    end)
+    :apply(Furnace)
+    :setIsCauldron(true)
+    :exit()]])
+	expect(added).toBe(3)
+end)
 

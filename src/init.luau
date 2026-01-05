@@ -164,6 +164,134 @@ function coverage.istanbul()
 	return report
 end
 
+-- Analyze collected hits to surface hotspots and potential runtime bottlenecks
+-- Options:
+--   limit (number?): max entries per category (default 10)
+--   minHits (number?): minimum hit count to include (default 1)
+--   includeStatements/includeFunctions/includeBranches (boolean?): category toggles
+function coverage.runtimeStats(options)
+	local coverageData = ensureCoverage()
+	options = options or {}
+	local limit = options.limit or 10
+	local minHits = options.minHits or 1
+	local includeStatements = options.includeStatements ~= false
+	local includeFunctions = options.includeFunctions ~= false
+	local includeBranches = options.includeBranches ~= false
+
+	local function takeTop(items)
+		table.sort(items, function(a, b)
+			if a.hits ~= b.hits then
+				return a.hits > b.hits
+			end
+			local af = tostring(a.file or "")
+			local bf = tostring(b.file or "")
+			if af ~= bf then
+				return af < bf
+			end
+			return (a.line or 0) < (b.line or 0)
+		end)
+		local result = {}
+		for i = 1, math.min(limit, #items) do
+			result[i] = items[i]
+		end
+		return result
+	end
+
+	local stats = {
+		totals = {
+			statements = { points = 0, hits = 0 },
+			functions = { points = 0, hits = 0 },
+			branches = { points = 0, hits = 0 },
+		},
+		topStatements = {},
+		topFunctions = {},
+		topBranches = {},
+		hotFiles = {},
+	}
+
+	local fileTotals = {}
+
+	if includeStatements and coverageData.hits and coverageData.map then
+		for id, hits in pairs(coverageData.hits) do
+			local info = coverageData.map[id]
+			if info and hits >= minHits then
+				stats.totals.statements.points += 1
+				stats.totals.statements.hits += hits
+				table.insert(stats.topStatements, {
+					id = id,
+					hits = hits,
+					file = info.file,
+					line = info.line,
+				})
+
+				if info.file then
+					fileTotals[info.file] = (fileTotals[info.file] or 0) + hits
+				end
+			end
+		end
+		stats.topStatements = takeTop(stats.topStatements)
+	end
+
+	if includeFunctions and coverageData.f and coverageData.fnMap then
+		for fnId, hits in pairs(coverageData.f) do
+			local info = coverageData.fnMap[fnId]
+			if info and hits >= minHits then
+				stats.totals.functions.points += 1
+				stats.totals.functions.hits += hits
+				table.insert(stats.topFunctions, {
+					id = fnId,
+					name = info.name,
+					hits = hits,
+					file = info.file,
+					line = info.line,
+				})
+
+				if info.file then
+					fileTotals[info.file] = (fileTotals[info.file] or 0) + hits
+				end
+			end
+		end
+		stats.topFunctions = takeTop(stats.topFunctions)
+	end
+
+	if includeBranches and coverageData.b and coverageData.branchMap then
+		for branchId, hitPaths in pairs(coverageData.b) do
+			local info = coverageData.branchMap[branchId]
+			if info then
+				local totalHits = 0
+				for _, h in pairs(hitPaths) do
+					totalHits += h or 0
+				end
+
+				if totalHits >= minHits then
+					stats.totals.branches.points += 1
+					stats.totals.branches.hits += totalHits
+					table.insert(stats.topBranches, {
+						id = branchId,
+						type = info.type,
+						hits = totalHits,
+						file = info.file,
+						line = info.line,
+						paths = hitPaths,
+					})
+
+					if info.file then
+						fileTotals[info.file] = (fileTotals[info.file] or 0) + totalHits
+					end
+				end
+			end
+		end
+		stats.topBranches = takeTop(stats.topBranches)
+	end
+
+	for file, hits in pairs(fileTotals) do
+		table.insert(stats.hotFiles, { file = file, hits = hits })
+	end
+	stats.hotFiles = takeTop(stats.hotFiles)
+
+	return stats
+end
+
 -- Revert all instrumented modules back to their original state
 function coverage.cleanup()
 	local coverageData = ensureCoverage()

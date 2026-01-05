@@ -39,8 +39,40 @@ interface BranchHitCounts {
     [id: string]: number[];
 }
 
+interface RuntimeStatsOptions {
+    /** Max entries per category to return (default 10). */
+    limit?: number;
+    /** Ignore entries with hit counts below this (default 1). */
+    minHits?: number;
+    includeStatements?: boolean;
+    includeFunctions?: boolean;
+    includeBranches?: boolean;
+}
+
+interface RuntimeTotalsCategory {
+    points: number;
+    hits: number;
+}
+
+interface RuntimeStatsResult {
+    totals: {
+        statements: RuntimeTotalsCategory;
+        functions: RuntimeTotalsCategory;
+        branches: RuntimeTotalsCategory;
+    };
+    topStatements: Array<{ id: number; hits: number; file?: string; line?: number }>;
+    topFunctions: Array<{ id: number; name?: string; hits: number; file?: string; line?: number }>;
+    topBranches: Array<{ id: number; type?: string; hits: number; file?: string; line?: number; paths?: number[] }>;
+    hotFiles: Array<{ file?: string; hits: number }>;
+}
+
 interface FileCoverageData {
     path: string;
+
+    /**
+     * Summarize the most frequently hit statements/functions/branches to help diagnose runtime slowness.
+     */
+    runtimeStats(options?: RuntimeStatsOptions): RuntimeStatsResult;
     statementMap: StatementMap;
     fnMap: FunctionMap;
     branchMap: BranchMap;

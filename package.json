@@ -1,6 +1,6 @@
 {
     "name": "@rbxts/coverage",
-    "version": "0.1.2",
+    "version": "0.1.3",
     "description": "Coverage instrumentation for Roblox Luau",
     "type": "module",
     "main": "src/init.luau",
